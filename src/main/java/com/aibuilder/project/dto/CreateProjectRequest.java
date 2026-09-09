@@ -20,7 +20,4 @@ public class CreateProjectRequest {
 
     @NotNull(message = "Project type is required")
     private ProjectType type;
-
-    @NotNull(message = "User ID is required")
-    private Long userId;
 }

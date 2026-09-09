@@ -34,11 +34,12 @@ public class ProjectController {
         return ResponseEntity.ok(projectService.getProject(id));
     }
 
-    @GetMapping("/user/{userId}")
-    public ResponseEntity<List<ProjectResponse>> getProjectsByUser(
-            @PathVariable Long userId) {
+    @GetMapping
+    public ResponseEntity<List<ProjectResponse>> getMyProjects() {
 
-        return ResponseEntity.ok(projectService.getProjectsByUser(userId));
+        return ResponseEntity.ok(
+                projectService.getMyProjects()
+        );
     }
 
     @PutMapping("/{id}")

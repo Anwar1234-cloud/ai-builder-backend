@@ -7,6 +7,8 @@ import com.aibuilder.project.repository.ProjectRepository;
 import com.aibuilder.user.entity.User;
 import com.aibuilder.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +25,7 @@ public class ProjectService {
 
     public ProjectResponse createProject(CreateProjectRequest request) {
 
-        User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = getAuthenticatedUser();
 
         Project project = Project.builder()
                 .name(request.getName())
@@ -41,25 +42,46 @@ public class ProjectService {
     @Transactional(readOnly = true)
     public ProjectResponse getProject(Long id) {
 
+        User user = getAuthenticatedUser();
+
         Project project = projectRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Project not found"));
+                .orElseThrow(() ->
+                        new RuntimeException("Project not found")
+                );
+
+        if (!project.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("You do not have access to this project");
+        }
 
         return toResponse(project);
     }
 
     @Transactional(readOnly = true)
-    public List<ProjectResponse> getProjectsByUser(Long userId) {
+    public List<ProjectResponse> getMyProjects() {
 
-        return projectRepository.findByUserId(userId)
+        User user = getAuthenticatedUser();
+
+        return projectRepository.findByUserId(user.getId())
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    public ProjectResponse updateProject(Long id, CreateProjectRequest request) {
+    public ProjectResponse updateProject(
+            Long id,
+            CreateProjectRequest request
+    ) {
+
+        User user = getAuthenticatedUser();
 
         Project project = projectRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Project not found"));
+                .orElseThrow(() ->
+                        new RuntimeException("Project not found")
+                );
+
+        if (!project.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("You do not have access to this project");
+        }
 
         project.setName(request.getName());
         project.setDescription(request.getDescription());
@@ -71,11 +93,39 @@ public class ProjectService {
 
     public void deleteProject(Long id) {
 
-        if (!projectRepository.existsById(id)) {
-            throw new RuntimeException("Project not found");
+        User user = getAuthenticatedUser();
+
+        Project project = projectRepository.findById(id)
+                .orElseThrow(() ->
+                        new RuntimeException("Project not found")
+                );
+
+        if (!project.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("You do not have access to this project");
         }
 
-        projectRepository.deleteById(id);
+        projectRepository.delete(project);
+    }
+
+    private User getAuthenticatedUser() {
+
+        Authentication authentication =
+                SecurityContextHolder
+                        .getContext()
+                        .getAuthentication();
+
+        if (authentication == null ||
+                !authentication.isAuthenticated()) {
+
+            throw new RuntimeException("User is not authenticated");
+        }
+
+        String email = authentication.getName();
+
+        return userRepository.findByEmail(email.toLowerCase())
+                .orElseThrow(() ->
+                        new RuntimeException("Authenticated user not found")
+                );
     }
 
     private ProjectResponse toResponse(Project project) {
