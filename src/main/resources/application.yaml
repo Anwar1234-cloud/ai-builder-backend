@@ -4,7 +4,7 @@ spring:
 
   datasource:
     url: jdbc:postgresql://localhost:5432/ai_builder
-    username: ${DB_USERNAME}
+    username: postgres
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
@@ -16,6 +16,15 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+  ai:
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY}
+        chat:
+          model: gemini-3.1-flash-lite
+          temperature: 0.2
+          max-output-tokens: 8192
 
 server:
   port: 8080
