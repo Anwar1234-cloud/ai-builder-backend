@@ -1,5 +1,6 @@
 package com.aibuilder.ai;
 
+import com.aibuilder.ai.dto.AiChatResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -12,17 +13,18 @@ public class AiChatController {
     private final AiChatService aiChatService;
 
     @PostMapping("/chat")
-    public ResponseEntity<String> chat(
+    public ResponseEntity<AiChatResponse> chat(
             @PathVariable Long projectId,
             @PathVariable Long conversationId,
             @RequestBody ChatRequest request
     ) {
 
-        String response = aiChatService.chat(
-                projectId,
-                conversationId,
-                request.message()
-        );
+        AiChatResponse response =
+                aiChatService.chat(
+                        projectId,
+                        conversationId,
+                        request.message()
+                );
 
         return ResponseEntity.ok(response);
     }

@@ -4,7 +4,7 @@ spring:
 
   datasource:
     url: jdbc:postgresql://localhost:5432/ai_builder
-    username: postgres
+    username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
@@ -25,6 +25,12 @@ spring:
           model: gemini-3.1-flash-lite
           temperature: 0.2
           max-output-tokens: 8192
+
+    tools:
+      limits:
+        max-calls-per-tool-default: 3
+        max-total-tool-calls: 8
+        on-limit-exceeded: RETURN_ERROR_RESPONSE
 
 server:
   port: 8080

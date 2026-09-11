@@ -1,5 +1,6 @@
 package com.aibuilder.ai;
 
+import com.aibuilder.ai.dto.AiChatResponse;
 import com.aibuilder.conversation.dto.CreateMessageRequest;
 import com.aibuilder.conversation.service.ConversationService;
 import lombok.RequiredArgsConstructor;
@@ -12,13 +13,13 @@ public class AiChatService {
     private final ConversationService conversationService;
     private final AiAgentService aiAgentService;
 
-    public String chat(
+    public AiChatResponse chat(
             Long projectId,
             Long conversationId,
             String userMessage
     ) {
 
-        // 1. Save user's message
+        // Save user message
         CreateMessageRequest request =
                 new CreateMessageRequest();
 
@@ -30,20 +31,23 @@ public class AiChatService {
                 request
         );
 
-        // 2. Run AI agent
-        String response =
+        // Run AI agent
+        AiAgentService.AgentResult result =
                 aiAgentService.run(
                         projectId,
                         conversationId
                 );
 
-        // 3. Save assistant response
+        // Save assistant response
         conversationService.addAssistantMessage(
                 projectId,
                 conversationId,
-                response
+                result.response()
         );
 
-        return response;
+        return new AiChatResponse(
+                result.agentRunId(),
+                result.response()
+        );
     }
 }

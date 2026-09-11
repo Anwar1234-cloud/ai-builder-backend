@@ -1,5 +1,6 @@
-package com.aibuilder.project.entity;
+package com.aibuilder.version.entity;
 
+import com.aibuilder.project.entity.Project;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,6 +9,15 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "project_versions",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_project_version_number",
+                        columnNames = {
+                                "project_id",
+                                "version_number"
+                        }
+                )
+        },
         indexes = {
                 @Index(
                         name = "idx_project_version_project",

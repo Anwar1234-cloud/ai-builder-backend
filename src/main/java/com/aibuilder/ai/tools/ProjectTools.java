@@ -6,6 +6,7 @@ import com.aibuilder.workspace.repository.ProjectFileRepository;
 import com.aibuilder.project.entity.Project;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.model.ToolContext;
+import com.aibuilder.agent.service.AgentToolCallService;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -17,98 +18,158 @@ public class ProjectTools {
 
     private final ProjectFileRepository projectFileRepository;
     private final ProjectRepository projectRepository;
+    private final AgentToolCallService agentToolCallService;
 
     @Tool(
             name = "listFiles",
             description = """
-                    List all files in the current project.
+                List all files in the current project.
 
-                    Use this tool when you need to inspect the existing
-                    project structure before creating or modifying files.
+                Use this when you need to inspect the project's
+                existing file structure.
 
-                    The current project is provided automatically by the system.
-                    Do not ask the user for a project ID.
-                    """
+                Do not ask the user for a project ID.
+                """
     )
-    public List<ProjectFileInfo> listFiles(ToolContext toolContext) {
+    public List<ProjectFileInfo> listFiles(
+            ToolContext toolContext
+    ) {
 
-        Object projectIdValue =
-                toolContext.getContext().get("projectId");
+        Long projectId =
+                ((Number) toolContext
+                        .getContext()
+                        .get("projectId"))
+                        .longValue();
 
-        if (projectIdValue == null) {
+        Long agentRunId =
+                getAgentRunId(toolContext);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        "listFiles",
+                        null
+                );
+
+        try {
+
+            List<ProjectFile> files =
+                    projectFileRepository
+                            .findByProjectIdOrderByPathAsc(projectId);
+
+            List<ProjectFileInfo> result =
+                    files.stream()
+                            .map(file ->
+                                    new ProjectFileInfo(
+                                            file.getId(),
+                                            file.getPath(),
+                                            file.getLanguage()
+                                    )
+                            )
+                            .toList();
+
+            agentToolCallService.completeToolCall(toolCallId);
+
+            return result;
+
+        } catch (Exception e) {
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    e.getMessage()
+            );
+
+            throw e;
+        }
+    }
+
+    private Long getAgentRunId(ToolContext toolContext) {
+
+        Object value =
+                toolContext.getContext().get("agentRunId");
+
+        if (value == null) {
             throw new IllegalStateException(
-                    "Project ID is missing from tool context"
+                    "Agent run ID is missing from tool context"
             );
         }
 
-        Long projectId = ((Number) projectIdValue).longValue();
-
-        List<ProjectFile> files =
-                projectFileRepository
-                        .findByProjectIdOrderByPathAsc(projectId);
-
-        return files.stream()
-                .map(file -> new ProjectFileInfo(
-                        file.getId(),
-                        file.getPath(),
-                        file.getLanguage()
-                ))
-                .toList();
+        return ((Number) value).longValue();
     }
 
     @Tool(
             name = "readFile",
             description = """
-                    Read the complete contents of a file in the current project.
+                Read the complete contents of an existing file
+                in the current project.
 
-                    Use this tool when you need to understand an existing file
-                    before modifying it.
-
-                    The file path must be an existing project file.
-                    """
+                Use this before modifying an existing file.
+                """
     )
     public String readFile(
             String path,
             ToolContext toolContext
     ) {
 
-        Object projectIdValue =
-                toolContext.getContext().get("projectId");
+        Long projectId =
+                ((Number) toolContext
+                        .getContext()
+                        .get("projectId"))
+                        .longValue();
 
-        if (projectIdValue == null) {
-            throw new IllegalStateException(
-                    "Project ID is missing from tool context"
+        Long agentRunId =
+                getAgentRunId(toolContext);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        "readFile",
+                        path
+                );
+
+        try {
+
+            ProjectFile file =
+                    projectFileRepository
+                            .findByProjectIdAndPath(
+                                    projectId,
+                                    path
+                            )
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "File not found: " + path
+                                    )
+                            );
+
+            String content = file.getContent();
+
+            agentToolCallService.completeToolCall(toolCallId);
+
+            return content;
+
+        } catch (Exception e) {
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    e.getMessage()
             );
+
+            throw e;
         }
-
-        Long projectId = ((Number) projectIdValue).longValue();
-
-        ProjectFile file =
-                projectFileRepository
-                        .findByProjectIdAndPath(projectId, path)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "File not found: " + path
-                                )
-                        );
-
-        return file.getContent();
     }
 
     @Tool(
             name = "writeFile",
             description = """
-        Update the contents of an existing file in the current project.
+                Update the contents of an existing file.
 
-        Use this tool ONLY when the file already exists.
+                Use this ONLY when the file already exists.
 
-        Never use this tool to simulate deleting a file.
-        Never replace a file with an empty or placeholder file when
-        the user asks to delete it.
+                Always write the complete contents of the file.
 
-        For creating a new file, use createFile.
-        For deleting a file, use deleteFile.
-        """
+                Never use this tool to simulate deleting a file.
+                For a new file use createFile.
+                """
     )
     public String writeFile(
             String path,
@@ -116,62 +177,75 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Object projectIdValue =
-                toolContext.getContext().get("projectId");
-
-        if (projectIdValue == null) {
-            throw new IllegalStateException(
-                    "Project ID is missing from tool context"
-            );
-        }
-
         Long projectId =
-                ((Number) projectIdValue).longValue();
+                ((Number) toolContext
+                        .getContext()
+                        .get("projectId"))
+                        .longValue();
 
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException(
-                    "File path is required"
+        Long agentRunId =
+                getAgentRunId(toolContext);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        "writeFile",
+                        path
+                );
+
+        try {
+
+            if (path == null || path.isBlank()) {
+                throw new IllegalArgumentException(
+                        "File path is required"
+                );
+            }
+
+            if (content == null) {
+                throw new IllegalArgumentException(
+                        "File content is required"
+                );
+            }
+
+            if (path.startsWith("/")
+                    || path.startsWith("\\")
+                    || path.contains("..")) {
+
+                throw new IllegalArgumentException(
+                        "Invalid project file path: " + path
+                );
+            }
+
+            ProjectFile file =
+                    projectFileRepository
+                            .findByProjectIdAndPath(
+                                    projectId,
+                                    path
+                            )
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "File not found: " + path
+                                    )
+                            );
+
+            file.setContent(content);
+            file.setLanguage(detectLanguage(path));
+
+            projectFileRepository.save(file);
+
+            agentToolCallService.completeToolCall(toolCallId);
+
+            return "File updated successfully: " + path;
+
+        } catch (Exception e) {
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    e.getMessage()
             );
+
+            throw e;
         }
-
-        if (content == null) {
-            throw new IllegalArgumentException(
-                    "File content is required"
-            );
-        }
-
-        // Prevent path traversal.
-        if (path.startsWith("/")
-                || path.startsWith("\\")
-                || path.contains("..")) {
-
-            throw new IllegalArgumentException(
-                    "Invalid project file path: " + path
-            );
-        }
-
-        Project project =
-                projectRepository.findById(projectId)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "Project not found: " + projectId
-                                )
-                        );
-
-        ProjectFile file =
-                projectFileRepository
-                        .findByProjectIdAndPath(projectId, path)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "File not found: " + path
-                                )
-                        );
-
-        file.setContent(content);
-
-        projectFileRepository.save(file);
-
-        return "File updated successfully: " + path;
     }
 
     @Tool(
@@ -179,15 +253,9 @@ public class ProjectTools {
             description = """
                 Create a new file in the current project.
 
-                Use this tool when a new file is required.
+                Use this only when the file does not already exist.
 
-                Do not use this tool to modify an existing file.
-                Use writeFile for existing files.
-
-                The path must be a relative project path such as:
-                src/components/Navbar.jsx
-                src/data/menu.js
-                app/page.tsx
+                Never overwrite an existing file with this tool.
                 """
     )
     public String createFile(
@@ -196,73 +264,90 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Object projectIdValue =
-                toolContext.getContext().get("projectId");
-
-        if (projectIdValue == null) {
-            throw new IllegalStateException(
-                    "Project ID is missing from tool context"
-            );
-        }
-
         Long projectId =
-                ((Number) projectIdValue).longValue();
+                ((Number) toolContext
+                        .getContext()
+                        .get("projectId"))
+                        .longValue();
 
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException(
-                    "File path is required"
+        Long agentRunId =
+                getAgentRunId(toolContext);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        "createFile",
+                        path
+                );
+
+        try {
+
+            if (path == null || path.isBlank()) {
+                throw new IllegalArgumentException(
+                        "File path is required"
+                );
+            }
+
+            if (content == null) {
+                throw new IllegalArgumentException(
+                        "File content is required"
+                );
+            }
+
+            if (path.startsWith("/")
+                    || path.startsWith("\\")
+                    || path.contains("..")) {
+
+                throw new IllegalArgumentException(
+                        "Invalid project file path: " + path
+                );
+            }
+
+            Project project =
+                    projectRepository.findById(projectId)
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "Project not found: "
+                                                    + projectId
+                                    )
+                            );
+
+            boolean exists =
+                    projectFileRepository
+                            .existsByProjectIdAndPath(
+                                    projectId,
+                                    path
+                            );
+
+            if (exists) {
+                throw new IllegalArgumentException(
+                        "File already exists: " + path
+                );
+            }
+
+            ProjectFile file =
+                    new ProjectFile();
+
+            file.setPath(path);
+            file.setContent(content);
+            file.setLanguage(detectLanguage(path));
+            file.setProject(project);
+
+            projectFileRepository.save(file);
+
+            agentToolCallService.completeToolCall(toolCallId);
+
+            return "File created successfully: " + path;
+
+        } catch (Exception e) {
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    e.getMessage()
             );
+
+            throw e;
         }
-
-        if (content == null) {
-            throw new IllegalArgumentException(
-                    "File content is required"
-            );
-        }
-
-        // Prevent path traversal.
-        if (path.startsWith("/")
-                || path.startsWith("\\")
-                || path.contains("..")) {
-
-            throw new IllegalArgumentException(
-                    "Invalid project file path: " + path
-            );
-        }
-
-        // Make sure the project exists.
-        Project project =
-                projectRepository.findById(projectId)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "Project not found: " + projectId
-                                )
-                        );
-
-        // Do not overwrite an existing file.
-        boolean exists =
-                projectFileRepository
-                        .existsByProjectIdAndPath(
-                                projectId,
-                                path
-                        );
-
-        if (exists) {
-            throw new IllegalArgumentException(
-                    "File already exists: " + path
-            );
-        }
-
-        ProjectFile file = new ProjectFile();
-
-        file.setPath(path);
-        file.setContent(content);
-        file.setLanguage(detectLanguage(path));
-        file.setProject(project);
-
-        projectFileRepository.save(file);
-
-        return "File created successfully: " + path;
     }
 
     private String detectLanguage(String path) {
@@ -295,12 +380,12 @@ public class ProjectTools {
     @Tool(
             name = "deleteFile",
             description = """
-                Delete an existing file from the current project.
+                Permanently delete an existing file from the current project.
 
-                Use this tool only when the user explicitly asks to
-                remove a file.
+                Use this when the user explicitly asks to delete or remove
+                a file.
 
-                Never delete a file merely because it appears unnecessary.
+                Never simulate deletion by writing placeholder content.
                 """
     )
     public String deleteFile(
@@ -308,45 +393,66 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Object projectIdValue =
-                toolContext.getContext().get("projectId");
-
-        if (projectIdValue == null) {
-            throw new IllegalStateException(
-                    "Project ID is missing from tool context"
-            );
-        }
-
         Long projectId =
-                ((Number) projectIdValue).longValue();
+                ((Number) toolContext
+                        .getContext()
+                        .get("projectId"))
+                        .longValue();
 
-        if (path == null || path.isBlank()) {
-            throw new IllegalArgumentException(
-                    "File path is required"
+        Long agentRunId =
+                getAgentRunId(toolContext);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        "deleteFile",
+                        path
+                );
+
+        try {
+
+            if (path == null || path.isBlank()) {
+                throw new IllegalArgumentException(
+                        "File path is required"
+                );
+            }
+
+            if (path.startsWith("/")
+                    || path.startsWith("\\")
+                    || path.contains("..")) {
+
+                throw new IllegalArgumentException(
+                        "Invalid project file path: " + path
+                );
+            }
+
+            ProjectFile file =
+                    projectFileRepository
+                            .findByProjectIdAndPath(
+                                    projectId,
+                                    path
+                            )
+                            .orElseThrow(() ->
+                                    new IllegalArgumentException(
+                                            "File not found: " + path
+                                    )
+                            );
+
+            projectFileRepository.delete(file);
+
+            agentToolCallService.completeToolCall(toolCallId);
+
+            return "File deleted successfully: " + path;
+
+        } catch (Exception e) {
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    e.getMessage()
             );
+
+            throw e;
         }
-
-        if (path.startsWith("/")
-                || path.startsWith("\\")
-                || path.contains("..")) {
-
-            throw new IllegalArgumentException(
-                    "Invalid project file path: " + path
-            );
-        }
-
-        ProjectFile file =
-                projectFileRepository
-                        .findByProjectIdAndPath(projectId, path)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "File not found: " + path
-                                )
-                        );
-
-        projectFileRepository.delete(file);
-
-        return "File deleted successfully: " + path;
     }
 
     public record ProjectFileInfo(
