@@ -1,4 +1,3 @@
-
 package com.aibuilder.version.service;
 
 import com.aibuilder.project.entity.Project;
@@ -88,12 +87,10 @@ public class ProjectVersionService {
 
         version = projectVersionRepository.save(version);
 
-
         // Get current project files
         List<ProjectFile> projectFiles =
                 projectFileRepository
                         .findByProjectIdOrderByPathAsc(projectId);
-
 
         // Store a copy of every current file
         for (ProjectFile projectFile : projectFiles) {
@@ -110,6 +107,79 @@ public class ProjectVersionService {
         }
 
         return version;
+    }
+
+
+    /**
+     * Restores the project to a previous version.
+     *
+     * The old version remains unchanged.
+     * After restoring, a NEW version is created with source RESTORE.
+     */
+    @Transactional
+    public ProjectVersion restoreVersion(
+            Long projectId,
+            Integer versionNumber
+    ) {
+
+        User user = getAuthenticatedUser();
+
+        Project project = getOwnedProject(projectId, user);
+
+        // Find the version that should be restored
+        ProjectVersion versionToRestore =
+                projectVersionRepository
+                        .findByProjectIdAndVersionNumber(
+                                projectId,
+                                versionNumber
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Version not found: " + versionNumber
+                                )
+                        );
+
+        // Get files stored inside that snapshot
+        List<ProjectVersionFile> snapshotFiles =
+                projectVersionFileRepository
+                        .findByVersionIdOrderByPathAsc(
+                                versionToRestore.getId()
+                        );
+
+        // Get current project files
+        List<ProjectFile> currentFiles =
+                projectFileRepository
+                        .findByProjectIdOrderByPathAsc(projectId);
+
+        // Delete current project files
+        projectFileRepository.deleteAll(currentFiles);
+
+        /*
+         * Recreate the project files from the selected snapshot.
+         */
+        for (ProjectVersionFile snapshotFile : snapshotFiles) {
+
+            ProjectFile projectFile = new ProjectFile();
+
+            projectFile.setProject(project);
+            projectFile.setPath(snapshotFile.getPath());
+            projectFile.setContent(snapshotFile.getContent());
+            projectFile.setLanguage(snapshotFile.getLanguage());
+
+            projectFileRepository.save(projectFile);
+        }
+
+        /*
+         * Create a NEW version representing the restore operation.
+         *
+         * Example:
+         * Version 3 restored -> Version 4 created with source RESTORE.
+         */
+        return createSnapshot(
+                projectId,
+                "Restored version " + versionNumber,
+                "RESTORE"
+        );
     }
 
 
@@ -230,4 +300,3 @@ public class ProjectVersionService {
         return project;
     }
 }
-

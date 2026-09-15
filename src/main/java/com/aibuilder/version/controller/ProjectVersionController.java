@@ -96,5 +96,17 @@ public class ProjectVersionController {
                 )
         );
     }
+    @PostMapping("/{versionNumber}/restore")
+    public ResponseEntity<ProjectVersion> restoreVersion(
+            @PathVariable Long projectId,
+            @PathVariable Integer versionNumber
+    ) {
+        return ResponseEntity.ok(
+                projectVersionService.restoreVersion(
+                        projectId,
+                        versionNumber
+                )
+        );
+    }
 }
 

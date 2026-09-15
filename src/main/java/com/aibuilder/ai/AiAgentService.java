@@ -2,7 +2,9 @@ package com.aibuilder.ai;
 
 import com.aibuilder.ai.tools.ProjectTools;
 import com.aibuilder.agent.entity.AgentRun;
+import com.aibuilder.agent.entity.AgentTask;
 import com.aibuilder.agent.service.AgentRunService;
+import com.aibuilder.agent.service.AgentTaskService;
 import com.aibuilder.conversation.dto.MessageResponse;
 import com.aibuilder.conversation.service.ConversationService;
 import com.aibuilder.version.service.ProjectVersionService;
@@ -25,6 +27,7 @@ public class AiAgentService {
     private final ConversationService conversationService;
     private final ProjectTools projectTools;
     private final AgentRunService agentRunService;
+    private final AgentTaskService agentTaskService;
     private final ProjectVersionService projectVersionService;
 
     public AgentResult run(Long projectId, Long conversationId) {
@@ -32,7 +35,16 @@ public class AiAgentService {
         AgentRun agentRun =
                 agentRunService.startRun(projectId, conversationId);
 
+        AgentTask task = agentTaskService.createTask(
+                agentRun.getId(),
+                "Execute user request",
+                "Analyze the user's request and modify the current project as required.",
+                1
+        );
+
         try {
+
+            agentTaskService.startTask(task.getId());
 
             List<MessageResponse> history =
                     conversationService.getMessages(
@@ -61,7 +73,7 @@ public class AiAgentService {
                             );
 
                     case SYSTEM -> {
-                        // Ignore SYSTEM messages for now.
+
                     }
                 }
             }
@@ -136,18 +148,13 @@ public class AiAgentService {
                 );
             }
 
-            /*
-             * AI work completed successfully.
-             *
-             * First mark the AgentRun as completed.
-             */
+
+            agentTaskService.completeTask(task.getId());
+
+
             agentRunService.completeRun(agentRun.getId());
 
-            /*
-             * Now create a complete snapshot of the project.
-             *
-             * This stores the current state of every ProjectFile.
-             */
+
             projectVersionService.createSnapshot(
                     projectId,
                     "AI agent changes",
@@ -161,10 +168,13 @@ public class AiAgentService {
 
         } catch (Exception e) {
 
-            /*
-             * If anything fails, the run is marked FAILED
-             * and no snapshot is created.
-             */
+            // Task failed
+            agentTaskService.failTask(
+                    task.getId(),
+                    e.getMessage()
+            );
+
+            // Agent run failed
             agentRunService.failRun(
                     agentRun.getId(),
                     e.getMessage()
