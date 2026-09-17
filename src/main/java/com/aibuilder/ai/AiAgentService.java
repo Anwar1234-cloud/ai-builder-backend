@@ -1,5 +1,6 @@
 package com.aibuilder.ai;
 
+import com.aibuilder.ai.dto.AgentPlan;
 import com.aibuilder.ai.tools.ProjectTools;
 import com.aibuilder.agent.entity.AgentRun;
 import com.aibuilder.agent.entity.AgentTask;
@@ -29,22 +30,23 @@ public class AiAgentService {
     private final AgentRunService agentRunService;
     private final AgentTaskService agentTaskService;
     private final ProjectVersionService projectVersionService;
+    private final AiPlannerService aiPlannerService;
 
-    public AgentResult run(Long projectId, Long conversationId) {
+    public AgentResult run(
+            Long projectId,
+            Long conversationId
+    ) {
 
         AgentRun agentRun =
-                agentRunService.startRun(projectId, conversationId);
+                agentRunService.startRun(
+                        projectId,
+                        conversationId
+                );
 
-        AgentTask task = agentTaskService.createTask(
-                agentRun.getId(),
-                "Execute user request",
-                "Analyze the user's request and modify the current project as required.",
-                1
-        );
+        List<AgentTask> tasks =
+                new ArrayList<>();
 
         try {
-
-            agentTaskService.startTask(task.getId());
 
             List<MessageResponse> history =
                     conversationService.getMessages(
@@ -52,107 +54,222 @@ public class AiAgentService {
                             conversationId
                     );
 
-            List<Message> messages = new ArrayList<>();
-
-            for (MessageResponse message : history) {
-
-                switch (message.getRole()) {
-
-                    case USER ->
-                            messages.add(
-                                    new UserMessage(
-                                            message.getContent()
-                                    )
-                            );
-
-                    case ASSISTANT ->
-                            messages.add(
-                                    new AssistantMessage(
-                                            message.getContent()
-                                    )
-                            );
-
-                    case SYSTEM -> {
-
-                    }
-                }
-            }
-
-            ChatClient chatClient =
-                    chatClientBuilder.build();
-
-            String response =
-                    chatClient
-                            .prompt()
-
-                            .system("""
-                                    You are the AI agent for an AI application builder.
-
-                                    You help users build:
-                                    - Websites
-                                    - Web applications
-                                    - Mobile applications
-                                    - Full-stack applications
-
-                                    You can inspect and modify the user's project
-                                    using the available tools.
-
-                                    TOOL RULES:
-
-                                    listFiles:
-                                    Use it to inspect the project structure.
-
-                                    readFile:
-                                    Before modifying an existing file, read it first.
-
-                                    createFile:
-                                    Use it only when the requested file does not exist.
-
-                                    writeFile:
-                                    Use it only to update an existing file.
-                                    Never use it to simulate deletion.
-
-                                    deleteFile:
-                                    Use it whenever the user explicitly asks
-                                    to delete or remove a file.
-
-                                    IMPORTANT:
-                                    - Work only with the current project.
-                                    - Do not invent files.
-                                    - Do not assume file contents.
-                                    - Use tools to perform requested changes.
-                                    - Do not merely display code when the user
-                                      asks you to modify the project.
-                                    - Once the requested work is complete,
-                                      stop using tools and provide a concise summary.
-                                    """)
-
-                            .messages(messages)
-
-                            .tools(projectTools)
-
-                            .toolContext(
-                                    Map.of(
-                                            "projectId", projectId,
-                                            "agentRunId", agentRun.getId()
-                                    )
+            String userRequest =
+                    history.stream()
+                            .filter(message ->
+                                    message.getRole()
+                                            .name()
+                                            .equals("USER"))
+                            .reduce(
+                                    (first, second) -> second
                             )
+                            .map(
+                                    MessageResponse::getContent
+                            )
+                            .orElseThrow(() ->
+                                    new RuntimeException(
+                                            "No user message found"
+                                    )
+                            );
 
-                            .call()
 
-                            .content();
+            AgentPlan plan =
+                    aiPlannerService.createPlan(
+                            projectId,
+                            userRequest
+                    );
 
-            if (response == null || response.isBlank()) {
+            if (plan.tasks() == null ||
+                    plan.tasks().isEmpty()) {
+
                 throw new RuntimeException(
-                        "AI agent returned an empty response"
+                        "AI planner returned no tasks"
                 );
             }
 
 
-            agentTaskService.completeTask(task.getId());
+            tasks =
+                    agentTaskService.createTasksFromPlan(
+                            agentRun.getId(),
+                            plan.tasks()
+                    );
+
+            String finalResponse = null;
 
 
-            agentRunService.completeRun(agentRun.getId());
+            for (AgentTask task : tasks) {
+
+                agentTaskService.startTask(
+                        task.getId()
+                );
+
+                try {
+
+                    List<Message> messages =
+                            new ArrayList<>();
+
+
+                    for (MessageResponse message :
+                            history) {
+
+                        switch (message.getRole()) {
+
+                            case USER ->
+                                    messages.add(
+                                            new UserMessage(
+                                                    message.getContent()
+                                            )
+                                    );
+
+                            case ASSISTANT ->
+                                    messages.add(
+                                            new AssistantMessage(
+                                                    message.getContent()
+                                            )
+                                    );
+
+                            case SYSTEM -> {
+
+                            }
+                        }
+                    }
+
+
+                    String taskInstruction =
+                            """
+                            Execute the following task from the AI plan.
+
+                            Task title:
+                            %s
+
+                            Task description:
+                            %s
+
+                            Original user request:
+                            %s
+
+                            IMPORTANT:
+                            - Actually perform the task.
+                            - Use the project tools.
+                            - Read existing files before changing them.
+                            - Use createFile only for new files.
+                            - Use writeFile only for existing files.
+                            - Use deleteFile for explicit deletions.
+                            - Work only inside the current project.
+                            - Do not merely describe the solution.
+                            - Stop after this task is complete.
+                            """.formatted(
+                                    task.getTitle(),
+                                    task.getDescription(),
+                                    userRequest
+                            );
+
+                    messages.add(
+                            new UserMessage(
+                                    taskInstruction
+                            )
+                    );
+
+                    ChatClient chatClient =
+                            chatClientBuilder.build();
+
+                    String taskResponse =
+                            chatClient
+                                    .prompt()
+
+                                    .system(
+                                            """
+                                            You are the execution agent
+                                            of an AI application builder.
+
+                                            You build:
+                                            - Websites
+                                            - Web applications
+                                            - Mobile applications
+                                            - Full-stack applications
+
+                                            Available tools:
+
+                                            listFiles:
+                                            Inspect project structure.
+
+                                            readFile:
+                                            Read an existing file before
+                                            modifying it.
+
+                                            createFile:
+                                            Create a file that does not exist.
+
+                                            writeFile:
+                                            Update an existing file only.
+
+                                            deleteFile:
+                                            Delete an existing file when
+                                            explicitly requested.
+
+                                            IMPORTANT:
+                                            - Perform actual project changes.
+                                            - Never invent file contents.
+                                            - Work only with the current project.
+                                            - Complete the assigned task.
+                                            - Never simulate deletion by
+                                              writing placeholder text.
+                                            """
+                                    )
+
+                                    .messages(messages)
+
+                                    .tools(projectTools)
+
+                                    .toolContext(
+                                            Map.of(
+                                                    "projectId",
+                                                    projectId,
+
+                                                    "agentRunId",
+                                                    agentRun.getId(),
+
+                                                    "agentTaskId",
+                                                    task.getId()
+                                            )
+                                    )
+
+                                    .call()
+
+                                    .content();
+
+                    if (taskResponse == null ||
+                            taskResponse.isBlank()) {
+
+                        throw new RuntimeException(
+                                "AI returned an empty response for task: "
+                                        + task.getTitle()
+                        );
+                    }
+
+
+                    agentTaskService.completeTask(
+                            task.getId()
+                    );
+
+                    finalResponse =
+                            taskResponse;
+
+                } catch (Exception taskException) {
+
+                    agentTaskService.failTask(
+                            task.getId(),
+                            taskException.getMessage()
+                    );
+
+                    throw taskException;
+                }
+            }
+
+
+            agentRunService.completeRun(
+                    agentRun.getId()
+            );
 
 
             projectVersionService.createSnapshot(
@@ -163,18 +280,11 @@ public class AiAgentService {
 
             return new AgentResult(
                     agentRun.getId(),
-                    response
+                    finalResponse
             );
 
         } catch (Exception e) {
 
-            // Task failed
-            agentTaskService.failTask(
-                    task.getId(),
-                    e.getMessage()
-            );
-
-            // Agent run failed
             agentRunService.failRun(
                     agentRun.getId(),
                     e.getMessage()

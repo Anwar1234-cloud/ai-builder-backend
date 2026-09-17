@@ -12,8 +12,12 @@ import java.time.LocalDateTime;
         name = "agent_tool_calls",
         indexes = {
                 @Index(
-                        name = "idx_agent_tool_calls_run",
+                        name = "idx_agent_tool_call_run_id",
                         columnList = "agent_run_id"
+                ),
+                @Index(
+                        name = "idx_agent_tool_call_task_id",
+                        columnList = "agent_task_id"
                 )
         }
 )
@@ -29,6 +33,10 @@ public class AgentToolCall {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "agent_run_id", nullable = false)
     private AgentRun agentRun;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "agent_task_id")
+    private AgentTask agentTask;
 
     @Column(nullable = false, length = 100)
     private String toolName;
@@ -47,4 +55,15 @@ public class AgentToolCall {
 
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
+
+    @PrePersist
+    protected void onCreate() {
+        if (startedAt == null) {
+            startedAt = LocalDateTime.now();
+        }
+
+        if (status == null) {
+            status = AgentToolCallStatus.RUNNING;
+        }
+    }
 }

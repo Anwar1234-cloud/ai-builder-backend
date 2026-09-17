@@ -118,4 +118,28 @@ public class AgentTaskService {
         return agentTaskRepository
                 .findByAgentRunIdOrderByTaskOrderAsc(agentRunId);
     }
+
+    @Transactional
+    public List<AgentTask> createTasksFromPlan(
+            Long agentRunId,
+            List<com.aibuilder.ai.dto.AgentPlan.PlannedTask> plannedTasks
+    ) {
+
+        List<AgentTask> tasks = new java.util.ArrayList<>();
+
+        for (com.aibuilder.ai.dto.AgentPlan.PlannedTask plannedTask
+                : plannedTasks) {
+
+            AgentTask task = createTask(
+                    agentRunId,
+                    plannedTask.title(),
+                    plannedTask.description(),
+                    plannedTask.taskOrder()
+            );
+
+            tasks.add(task);
+        }
+
+        return tasks;
+    }
 }

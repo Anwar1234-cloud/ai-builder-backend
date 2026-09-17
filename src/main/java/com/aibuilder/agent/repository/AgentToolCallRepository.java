@@ -8,7 +8,9 @@ import java.util.List;
 public interface AgentToolCallRepository
         extends JpaRepository<AgentToolCall, Long> {
 
-    List<AgentToolCall> findByAgentRunIdOrderByStartedAtAsc(
-            Long agentRunId
-    );
+    List<AgentToolCall>
+    findByAgentRunIdOrderByStartedAtAsc(Long agentRunId);
+
+    List<AgentToolCall>
+    findByAgentTaskIdOrderByStartedAtAsc(Long agentTaskId);
 }

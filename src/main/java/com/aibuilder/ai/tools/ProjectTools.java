@@ -44,9 +44,13 @@ public class ProjectTools {
         Long agentRunId =
                 getAgentRunId(toolContext);
 
+        Long agentTaskId =
+                getAgentTaskId(toolContext);
+
         Long toolCallId =
                 agentToolCallService.startToolCall(
                         agentRunId,
+                        agentTaskId,
                         "listFiles",
                         null
                 );
@@ -96,6 +100,22 @@ public class ProjectTools {
 
         return ((Number) value).longValue();
     }
+    private Long getAgentTaskId(ToolContext toolContext) {
+
+        Object value =
+                toolContext.getContext()
+                        .get("agentTaskId");
+
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+
+        return Long.valueOf(value.toString());
+    }
 
     @Tool(
             name = "readFile",
@@ -119,10 +139,13 @@ public class ProjectTools {
 
         Long agentRunId =
                 getAgentRunId(toolContext);
+        Long agentTaskId =
+                getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
                         agentRunId,
+                        agentTaskId,
                         "readFile",
                         path
                 );
@@ -185,10 +208,13 @@ public class ProjectTools {
 
         Long agentRunId =
                 getAgentRunId(toolContext);
+        Long agentTaskId =
+                getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
                         agentRunId,
+                        agentTaskId,
                         "writeFile",
                         path
                 );
@@ -253,7 +279,11 @@ public class ProjectTools {
             description = """
                 Create a new file in the current project.
 
-                Use this only when the file does not already exist.
+                    Use this only when the file does not already exist.
+                    Before creating a file, inspect the project structure with listFiles
+                    or verify its existence with the appropriate tool.
+                    If the file already exists, do NOT call createFile.
+                    Use readFile and then writeFile when the existing file needs to be updated.
 
                 Never overwrite an existing file with this tool.
                 """
@@ -272,10 +302,13 @@ public class ProjectTools {
 
         Long agentRunId =
                 getAgentRunId(toolContext);
+        Long agentTaskId =
+                getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
                         agentRunId,
+                        agentTaskId,
                         "createFile",
                         path
                 );
@@ -346,7 +379,9 @@ public class ProjectTools {
                     e.getMessage()
             );
 
-            throw e;
+            return "TOOL_ERROR: " + e.getMessage()
+                    + ". The operation was not completed. "
+                    + "Inspect the existing project and choose the appropriate action.";
         }
     }
 
@@ -401,10 +436,13 @@ public class ProjectTools {
 
         Long agentRunId =
                 getAgentRunId(toolContext);
+        Long agentTaskId =
+                getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
                         agentRunId,
+                        agentTaskId,
                         "deleteFile",
                         path
                 );

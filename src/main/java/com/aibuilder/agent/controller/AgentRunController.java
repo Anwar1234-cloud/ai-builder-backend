@@ -51,4 +51,24 @@ public class AgentRunController {
                         .toList()
         );
     }
+    @GetMapping("/{runId}/tasks/{taskId}/tool-calls")
+    public ResponseEntity<List<AgentToolCallResponse>> getTaskToolCalls(
+            @PathVariable Long projectId,
+            @PathVariable Long runId,
+            @PathVariable Long taskId
+    ) {
+
+        agentRunService.getRun(
+                projectId,
+                runId
+        );
+
+        return ResponseEntity.ok(
+                agentToolCallService
+                        .getToolCallsForTask(taskId)
+                        .stream()
+                        .map(AgentToolCallResponse::from)
+                        .toList()
+        );
+    }
 }
