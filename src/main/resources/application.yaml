@@ -32,6 +32,16 @@ spring:
         max-total-tool-calls: 8
         on-limit-exceeded: RETURN_ERROR_RESPONSE
 
+    retry:
+      max-attempts: 3
+      backoff:
+        initial-interval: 35000ms
+        multiplier: 2
+        max-interval: 120000ms
+      on-http-codes:
+        - 429
+        - 503
+
 server:
   port: 8080
 

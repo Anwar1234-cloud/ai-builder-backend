@@ -33,7 +33,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/health",
-                                "/actuator/health"
+                                "/actuator/health",
+                                "/api/projects/*/previews/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

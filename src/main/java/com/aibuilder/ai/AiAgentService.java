@@ -6,6 +6,8 @@ import com.aibuilder.agent.entity.AgentRun;
 import com.aibuilder.agent.entity.AgentTask;
 import com.aibuilder.agent.service.AgentRunService;
 import com.aibuilder.agent.service.AgentTaskService;
+import com.aibuilder.build.entity.BuildRun;
+import com.aibuilder.build.service.BuildService;
 import com.aibuilder.conversation.dto.MessageResponse;
 import com.aibuilder.conversation.service.ConversationService;
 import com.aibuilder.version.service.ProjectVersionService;
@@ -31,6 +33,8 @@ public class AiAgentService {
     private final AgentTaskService agentTaskService;
     private final ProjectVersionService projectVersionService;
     private final AiPlannerService aiPlannerService;
+    private final BuildService buildService;
+    private static final int MAX_BUILD_ATTEMPTS = 3;
 
     public AgentResult run(
             Long projectId,
@@ -267,16 +271,40 @@ public class AiAgentService {
             }
 
 
+            BuildRun buildRun =
+                    buildWithAutoFix(
+                            projectId,
+                            agentRun.getId(),
+                            userRequest,
+                            history,
+                            tasks
+                    );
+
+            if (!"SUCCESS".equals(
+                    buildRun.getStatus().name()
+            )) {
+
+                throw new RuntimeException(
+                        "Project build failed after "
+                                + MAX_BUILD_ATTEMPTS
+                                + " attempts"
+                                + "\n\nBuild output:\n"
+                                + buildRun.getOutput()
+                                + "\n\nBuild errors:\n"
+                                + buildRun.getErrorOutput()
+                );
+            }
+
             agentRunService.completeRun(
                     agentRun.getId()
             );
 
-
             projectVersionService.createSnapshot(
                     projectId,
-                    "AI agent changes",
+                    "AI agent changes - build successful",
                     "AI_AGENT"
             );
+
 
             return new AgentResult(
                     agentRun.getId(),
@@ -292,6 +320,235 @@ public class AiAgentService {
 
             throw e;
         }
+    }
+
+    private BuildRun buildWithAutoFix(
+            Long projectId,
+            Long agentRunId,
+            String userRequest,
+            List<MessageResponse> history,
+            List<AgentTask> tasks
+    ) {
+
+        BuildRun latestBuild = null;
+
+        for (int attempt = 1;
+             attempt <= MAX_BUILD_ATTEMPTS;
+             attempt++) {
+
+
+            latestBuild =
+                    buildService.createBuild(
+                            projectId,
+                            agentRunId,
+                            "npm run build"
+                    );
+
+            latestBuild =
+                    buildService.executeBuild(
+                            latestBuild.getId()
+                    );
+
+
+            if (latestBuild.getStatus().name()
+                    .equals("SUCCESS")) {
+
+                return latestBuild;
+            }
+
+
+            if (attempt == MAX_BUILD_ATTEMPTS) {
+                return latestBuild;
+            }
+
+
+            int nextTaskOrder =
+                    tasks.size() + 1;
+
+            AgentTask fixTask =
+                    agentTaskService.createTask(
+                            agentRunId,
+                            "Fix build errors - attempt " + attempt,
+                            """
+                            Fix the build errors reported by the project build.
+    
+                            Build command:
+                            npm run build
+    
+                            Build output:
+                            %s
+    
+                            Build errors:
+                            %s
+                            """.formatted(
+                                    latestBuild.getOutput(),
+                                    latestBuild.getErrorOutput()
+                            ),
+                            nextTaskOrder
+                    );
+
+            tasks.add(fixTask);
+
+            agentTaskService.startTask(
+                    fixTask.getId()
+            );
+
+            try {
+
+
+                List<Message> messages =
+                        new ArrayList<>();
+
+                for (MessageResponse message :
+                        history) {
+
+                    switch (message.getRole()) {
+
+                        case USER ->
+                                messages.add(
+                                        new UserMessage(
+                                                message.getContent()
+                                        )
+                                );
+
+                        case ASSISTANT ->
+                                messages.add(
+                                        new AssistantMessage(
+                                                message.getContent()
+                                        )
+                                );
+
+                        case SYSTEM -> {
+                            // Ignore system messages.
+                        }
+                    }
+                }
+
+
+                String fixInstruction =
+                        """
+                        The project build failed.
+    
+                        Your job is to diagnose and fix the build.
+    
+                        Original user request:
+                        %s
+    
+                        Build attempt:
+                        %d
+    
+                        Build output:
+                        %s
+    
+                        Build error:
+                        %s
+    
+                        IMPORTANT:
+                        - Inspect the relevant files first.
+                        - Use readFile before modifying existing files.
+                        - Actually fix the source/project files.
+                        - Do not merely explain the error.
+                        - Do not invent files.
+                        - Do not simulate deletion.
+                        - After fixing the problem, stop.
+                        """.formatted(
+                                userRequest,
+                                attempt,
+                                latestBuild.getOutput(),
+                                latestBuild.getErrorOutput()
+                        );
+
+                messages.add(
+                        new UserMessage(
+                                fixInstruction
+                        )
+                );
+
+                ChatClient chatClient =
+                        chatClientBuilder.build();
+
+                String fixResponse =
+                        chatClient
+                                .prompt()
+
+                                .system(
+                                        """
+                                        You are the build-fix agent
+                                        for an AI application builder.
+    
+                                        Diagnose build/compiler errors
+                                        and modify the project to fix them.
+    
+                                        Available tools:
+    
+                                        listFiles:
+                                        Inspect project structure.
+    
+                                        readFile:
+                                        Read existing files.
+    
+                                        createFile:
+                                        Create missing files.
+    
+                                        writeFile:
+                                        Update existing files.
+    
+                                        deleteFile:
+                                        Delete files only when explicitly required.
+    
+                                        Always inspect the relevant files
+                                        before changing them.
+    
+                                        Your goal is to leave the project
+                                        in a buildable state.
+                                        """
+                                )
+
+                                .messages(messages)
+
+                                .tools(projectTools)
+
+                                .toolContext(
+                                        Map.of(
+                                                "projectId",
+                                                projectId,
+
+                                                "agentRunId",
+                                                agentRunId,
+
+                                                "agentTaskId",
+                                                fixTask.getId()
+                                        )
+                                )
+
+                                .call()
+
+                                .content();
+
+                if (fixResponse == null ||
+                        fixResponse.isBlank()) {
+
+                    throw new RuntimeException(
+                            "AI build-fix response was empty"
+                    );
+                }
+
+                agentTaskService.completeTask(
+                        fixTask.getId()
+                );
+
+            } catch (Exception e) {
+
+                agentTaskService.failTask(
+                        fixTask.getId(),
+                        e.getMessage()
+                );
+
+                throw e;
+            }
+        }
+
+        return latestBuild;
     }
 
     public record AgentResult(
