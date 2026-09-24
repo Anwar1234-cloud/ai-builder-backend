@@ -1,8 +1,10 @@
 package com.aibuilder.project.service;
 
+import com.aibuilder.build.service.ProjectBootstrapService;
 import com.aibuilder.project.dto.CreateProjectRequest;
 import com.aibuilder.project.dto.ProjectResponse;
 import com.aibuilder.project.entity.Project;
+import com.aibuilder.project.entity.ProjectType;
 import com.aibuilder.project.repository.ProjectRepository;
 import com.aibuilder.user.entity.User;
 import com.aibuilder.user.repository.UserRepository;
@@ -22,6 +24,7 @@ public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
+    private final ProjectBootstrapService projectBootstrapService;
 
     public ProjectResponse createProject(CreateProjectRequest request) {
 
@@ -35,6 +38,15 @@ public class ProjectService {
                 .build();
 
         Project savedProject = projectRepository.save(project);
+
+        if (savedProject.getType() == ProjectType.WEBSITE
+                || savedProject.getType() == ProjectType.WEB_APP
+                || savedProject.getType() == ProjectType.FULL_STACK_APP) {
+
+            projectBootstrapService.bootstrapReactProject(
+                    savedProject.getId()
+            );
+        }
 
         return toResponse(savedProject);
     }

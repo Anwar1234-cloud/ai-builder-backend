@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/ai_builder
     username: postgres
-    password:  ${DB_PASSWORD}
+    password:  12345
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -28,8 +28,8 @@ spring:
 
     tools:
       limits:
-        max-calls-per-tool-default: 3
-        max-total-tool-calls: 8
+        max-calls-per-tool-default: 10
+        max-total-tool-calls: 30
         on-limit-exceeded: RETURN_ERROR_RESPONSE
 
     retry:
@@ -46,5 +46,5 @@ server:
   port: 8080
 
 jwt:
-  secret: ${JWT_SECRET}
+  secret: ai-builder-development-secret-key-change-before-production-2026
   expiration: 86400000

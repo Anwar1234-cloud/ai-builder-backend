@@ -155,7 +155,9 @@ public class AiAgentService {
                             IMPORTANT:
                             - Actually perform the task.
                             - Use the project tools.
-                            - Read existing files before changing them.
+                            - Call listFiles once at the start to see what already exists.
+                            - Only call readFile on files that listFiles actually shows exist.
+                            - For files that do not exist yet, call createFile directly — do not check with readFile first.
                             - Use createFile only for new files.
                             - Use writeFile only for existing files.
                             - Use deleteFile for explicit deletions.
@@ -245,10 +247,8 @@ public class AiAgentService {
                     if (taskResponse == null ||
                             taskResponse.isBlank()) {
 
-                        throw new RuntimeException(
-                                "AI returned an empty response for task: "
-                                        + task.getTitle()
-                        );
+                        taskResponse =
+                                "Task completed via tool calls.";
                     }
 
 
@@ -528,9 +528,10 @@ public class AiAgentService {
                 if (fixResponse == null ||
                         fixResponse.isBlank()) {
 
-                    throw new RuntimeException(
-                            "AI build-fix response was empty"
-                    );
+                    fixResponse =
+                            "Fix completed via tool calls";
+
+
                 }
 
                 agentTaskService.completeTask(

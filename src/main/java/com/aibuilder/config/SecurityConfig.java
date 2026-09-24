@@ -17,8 +17,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
 
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -29,6 +30,12 @@ public class SecurityConfig {
                         )
                 )
 
+                .headers(headers ->
+                        headers.frameOptions(
+                                frame -> frame.disable()
+                        )
+                )
+
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
@@ -36,7 +43,9 @@ public class SecurityConfig {
                                 "/actuator/health",
                                 "/api/projects/*/previews/**"
                         ).permitAll()
-                        .anyRequest().authenticated()
+
+                        .anyRequest()
+                        .authenticated()
                 )
 
                 .addFilterBefore(

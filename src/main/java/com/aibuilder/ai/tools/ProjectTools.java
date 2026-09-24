@@ -1,16 +1,22 @@
 package com.aibuilder.ai.tools;
 
+import com.aibuilder.agent.entity.AgentToolCall;
 import com.aibuilder.project.repository.ProjectRepository;
 import com.aibuilder.workspace.entity.ProjectFile;
 import com.aibuilder.workspace.repository.ProjectFileRepository;
 import com.aibuilder.project.entity.Project;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.model.ToolContext;
 import com.aibuilder.agent.service.AgentToolCallService;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import java.util.Optional;
 
 import java.util.List;
+
+import static io.micrometer.core.instrument.util.StringEscapeUtils.escapeJson;
 
 @Component
 @RequiredArgsConstructor
@@ -19,6 +25,7 @@ public class ProjectTools {
     private final ProjectFileRepository projectFileRepository;
     private final ProjectRepository projectRepository;
     private final AgentToolCallService agentToolCallService;
+    private final ObjectMapper objectMapper;
 
     @Tool(
             name = "listFiles",
@@ -119,66 +126,99 @@ public class ProjectTools {
 
     @Tool(
             name = "readFile",
-            description = """
-                Read the complete contents of an existing file
-                in the current project.
-
-                Use this before modifying an existing file.
-                """
+            description = "Read the contents of an existing project file. " +
+                    "Use this before modifying a file. " +
+                    "If the file does not exist, return a structured error instead of throwing."
     )
     public String readFile(
-            String path,
-            ToolContext toolContext
+            @ToolParam(description = "Project-relative file path") String path,
+            ToolContext context
     ) {
 
-        Long projectId =
-                ((Number) toolContext
-                        .getContext()
-                        .get("projectId"))
-                        .longValue();
+        Long projectId = getProjectId(context);
+        Long agentRunId = getAgentRunId(context);
+        Long agentTaskId = getAgentTaskId(context);
 
-        Long agentRunId =
-                getAgentRunId(toolContext);
-        Long agentTaskId =
-                getAgentTaskId(toolContext);
-
-        Long toolCallId =
-                agentToolCallService.startToolCall(
-                        agentRunId,
-                        agentTaskId,
-                        "readFile",
-                        path
-                );
+        Long toolCallId = agentToolCallService.startToolCall(
+                agentRunId,
+                agentTaskId,
+                "readFile",
+                path
+        );
 
         try {
+            validatePath(path);
 
-            ProjectFile file =
-                    projectFileRepository
-                            .findByProjectIdAndPath(
-                                    projectId,
-                                    path
-                            )
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                            "File not found: " + path
-                                    )
-                            );
+            Optional<ProjectFile> fileOpt =
+                    projectFileRepository.findByProjectIdAndPath(projectId, path);
 
-            String content = file.getContent();
+            if (fileOpt.isEmpty()) {
+                String errorJson = """
+                {
+                  "success": false,
+                  "error": "FILE_NOT_FOUND",
+                  "path": "%s",
+                  "message": "File does not exist in the project. Create it if required."
+                }
+                """.formatted(path);
+
+                agentToolCallService.completeToolCall(toolCallId);
+                return errorJson;
+            }
+
+            ProjectFile file = fileOpt.get();
+
+            String result = """
+            {
+              "success": true,
+              "path": "%s",
+              "content": %s,
+              "language": "%s"
+            }
+            """.formatted(
+                    path,
+                    objectMapper.writeValueAsString(file.getContent()),
+                    file.getLanguage() == null ? "" : file.getLanguage()
+            );
 
             agentToolCallService.completeToolCall(toolCallId);
-
-            return content;
+            return result;
 
         } catch (Exception e) {
 
-            agentToolCallService.failToolCall(
-                    toolCallId,
-                    e.getMessage()
+            String errorJson = """
+            {
+              "success": false,
+              "error": "READ_FILE_ERROR",
+              "path": "%s",
+              "message": "%s"
+            }
+            """.formatted(
+                    path,
+                    escapeJson(e.getMessage())
             );
 
-            throw e;
+            agentToolCallService.failToolCall(toolCallId, e.getMessage());
+            return errorJson;
         }
+    }
+
+    private Long getProjectId(ToolContext context) {
+        if (context == null || context.getContext() == null) {
+            throw new IllegalStateException("ToolContext is missing");
+        }
+
+        Object value = context.getContext().get("projectId");
+
+        if (value == null) {
+            throw new IllegalStateException("projectId is missing from ToolContext");
+        }
+
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+
+        return Long.parseLong(value.toString());
     }
 
     @Tool(
@@ -277,16 +317,20 @@ public class ProjectTools {
     @Tool(
             name = "createFile",
             description = """
-                Create a new file in the current project.
+            Create a new file in the current project.
 
-                    Use this only when the file does not already exist.
-                    Before creating a file, inspect the project structure with listFiles
-                    or verify its existence with the appropriate tool.
-                    If the file already exists, do NOT call createFile.
-                    Use readFile and then writeFile when the existing file needs to be updated.
+                Call listFiles ONCE at the start of your work to see all
+                existing files. Use that list to decide whether each file
+                you need already exists.
 
-                Never overwrite an existing file with this tool.
-                """
+                If a file is NOT in that list, call createFile directly —
+                do not call readFile just to check if it exists.
+
+                If a file IS in that list and needs changes, use readFile
+                then writeFile instead.
+
+            Never overwrite an existing file with this tool.
+            """
     )
     public String createFile(
             String path,
@@ -498,5 +542,41 @@ public class ProjectTools {
             String path,
             String language
     ) {
+    }
+    private void validatePath(String path) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalArgumentException("File path cannot be empty");
+        }
+
+        String normalized = path.replace('\\', '/');
+
+        if (normalized.startsWith("/")) {
+            throw new IllegalArgumentException("Absolute paths are not allowed");
+        }
+
+        if (normalized.matches("^[A-Za-z]:/.*")) {
+            throw new IllegalArgumentException("Absolute paths are not allowed");
+        }
+
+        String[] parts = normalized.split("/");
+
+        for (String part : parts) {
+            if ("..".equals(part)) {
+                throw new IllegalArgumentException("Path traversal is not allowed");
+            }
+        }
+    }
+
+    private String escapeJson(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
     }
 }
