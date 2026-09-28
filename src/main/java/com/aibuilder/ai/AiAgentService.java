@@ -38,13 +38,14 @@ public class AiAgentService {
 
     public AgentResult run(
             Long projectId,
-            Long conversationId
+            Long conversationId,
+            Long agentRunId
     ) {
 
         AgentRun agentRun =
-                agentRunService.startRun(
+                agentRunService.getRun(
                         projectId,
-                        conversationId
+                        agentRunId
                 );
 
         List<AgentTask> tasks =
@@ -152,18 +153,41 @@ public class AiAgentService {
                             Original user request:
                             %s
 
-                            IMPORTANT:
-                            - Actually perform the task.
-                            - Use the project tools.
-                            - Call listFiles once at the start to see what already exists.
-                            - Only call readFile on files that listFiles actually shows exist.
-                            - For files that do not exist yet, call createFile directly — do not check with readFile first.
-                            - Use createFile only for new files.
-                            - Use writeFile only for existing files.
-                            - Use deleteFile for explicit deletions.
-                            - Work only inside the current project.
-                            - Do not merely describe the solution.
-                            - Stop after this task is complete.
+                                    IMPORTANT:
+                                    - Actually perform the task.
+                                    - Use the project tools.
+                                    - Call listFiles once at the start to inspect the project.
+                                    - Do NOT call listFiles repeatedly.
+                                    - Only call readFile for files that listFiles shows exist.
+                                    - NEVER call readFile more than once for the same file path during this task.
+                                    - After reading a file, remember its contents and use that information.
+                                    - For files that do not exist, call createFile directly.
+                                    - Do NOT call readFile to check whether a new file exists.
+                                    - Use createFile only for new files.
+                                    - Use writeFile only for existing files.
+                                    - Use deleteFile only for explicit deletions.
+                                    - Do not repeatedly inspect the same file.
+                                    - Do not repeatedly perform the same tool call.
+                                    - Work only inside the current project.
+                                    - Actually modify the project; do not merely describe the solution.
+                                    - Stop when the assigned task is complete.
+                            
+                              UI/UX REQUIREMENT:
+                                                                
+                                    When the task affects the interface, do not stop after making
+                                    the functionality work.
+                                                                
+                                    Also improve:
+                                    - layout
+                                    - spacing
+                                    - typography
+                                    - colors
+                                    - responsive behavior
+                                    - visual hierarchy
+                                    - interactions
+                                    - component consistency
+                                                                
+                                    The final interface should meet the project's UI/UX quality standard.
                             """.formatted(
                                     task.getTitle(),
                                     task.getDescription(),
@@ -198,10 +222,32 @@ public class AiAgentService {
 
                                             listFiles:
                                             Inspect project structure.
+                                            
+                                                    - Call listFiles at most once per task.
+                                                    - Never read the same file more than once during a task.
+                                                    - Do not use readFile to check whether a new file exists.
+                                                    - After reading a file, use the returned content and move forward.
+                                                    - Do not repeat identical tool calls.
+                                                    - Once the requested changes are implemented, stop using tools.
 
-                                            readFile:
-                                            Read an existing file before
-                                            modifying it.
+                                                    readFile:
+                                                    Read an existing file before modifying it.
+                                                                                              
+                                                    Rules:
+                                                    - Only read files that actually exist.
+                                                    - Never read the same file more than once during a task.
+                                                    - Do not use readFile to check whether a new file exists.
+                                                    - After reading a file, use the returned content and move forward.
+                                                    
+                                                    TOOL EXECUTION RULES:
+                                                            
+                                                            - Call listFiles at most once per task.
+                                                            - Do not repeat identical tool calls.
+                                                            - Do not repeatedly read the same file.
+                                                            - Prefer making progress over repeatedly inspecting files.
+                                                            - If a file does not exist, create it.
+                                                            - If a file exists, read it once and then modify it if needed.
+                                                            - Once the requested changes are implemented, stop using tools.
 
                                             createFile:
                                             Create a file that does not exist.
@@ -220,6 +266,55 @@ public class AiAgentService {
                                             - Complete the assigned task.
                                             - Never simulate deletion by
                                               writing placeholder text.
+                                              
+                                              UI/UX QUALITY STANDARD:
+                                                      
+                                                      Every generated project must have a polished, production-quality UI/UX.
+                                                      
+                                                      The visual style must adapt to the user's project/domain.
+                                                      Do NOT use one fixed visual theme for every project.
+                                                      
+                                                      For every visual project:
+                                                      
+                                                      - Create a clear visual hierarchy.
+                                                      - Use a strong and purposeful hero/header when appropriate.
+                                                      - Use professional typography with clear heading/body contrast.
+                                                      - Use a deliberate color palette appropriate to the project.
+                                                      - Use consistent spacing, padding, margins, and alignment.
+                                                      - Create visually distinct sections rather than one long block.
+                                                      - Use polished cards, buttons, inputs, navigation and CTAs.
+                                                      - Use meaningful icons where appropriate.
+                                                      - Use high-quality imagery or visual backgrounds when appropriate.
+                                                      - Use overlays, gradients, borders, shadows and depth thoughtfully.
+                                                      - Add hover states and subtle transitions where they improve UX.
+                                                      - Make layouts responsive for mobile, tablet and desktop.
+                                                      - Ensure text contrast and readability.
+                                                      - Maintain consistent border radius, spacing and component styles.
+                                                      - Avoid default browser-looking elements.
+                                                      - Avoid plain unstyled HTML.
+                                                      - Avoid excessive decoration or unnecessary animations.
+                                                      - Keep the interface accessible and easy to navigate.
+                                                      
+                                                      QUALITY BAR:
+                                                      
+                                                      Before considering the task complete, inspect the generated UI
+                                                      and ask yourself:
+                                                      
+                                                      1. Does the page have a clear visual hierarchy?
+                                                      2. Does the first screen immediately communicate the product?
+                                                      3. Are the sections visually distinct?
+                                                      4. Are typography and spacing consistent?
+                                                      5. Are buttons and CTAs visually clear?
+                                                      6. Does the design feel intentionally designed rather than generated?
+                                                      7. Does it look good on mobile and desktop?
+                                                      8. Are there obvious empty, broken or unstyled areas?
+                                                      
+                                                      If the answer to any important question is no, improve the UI
+                                                      before completing the task.
+                                                      
+                                                      IMPORTANT:
+                                                      The goal is not merely working code.
+                                                      The goal is a polished, professional application.
                                             """
                                     )
 

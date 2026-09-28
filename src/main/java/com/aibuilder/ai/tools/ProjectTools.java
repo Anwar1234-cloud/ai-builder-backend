@@ -152,54 +152,62 @@ public class ProjectTools {
             Optional<ProjectFile> fileOpt =
                     projectFileRepository.findByProjectIdAndPath(projectId, path);
 
+            // File does not exist
             if (fileOpt.isEmpty()) {
-                String errorJson = """
-                {
-                  "success": false,
-                  "error": "FILE_NOT_FOUND",
-                  "path": "%s",
-                  "message": "File does not exist in the project. Create it if required."
-                }
-                """.formatted(path);
 
                 agentToolCallService.completeToolCall(toolCallId);
-                return errorJson;
+
+                return """
+                    FILE NOT FOUND
+
+                    Path: %s
+
+                    This file does not exist in the project.
+                    If the task requires this file, create it using createFile.
+                    Do not call readFile for this path again.
+                    """.formatted(path);
             }
 
             ProjectFile file = fileOpt.get();
 
-            String result = """
-            {
-              "success": true,
-              "path": "%s",
-              "content": %s,
-              "language": "%s"
-            }
-            """.formatted(
-                    path,
-                    objectMapper.writeValueAsString(file.getContent()),
-                    file.getLanguage() == null ? "" : file.getLanguage()
-            );
+            String language =
+                    file.getLanguage() == null ? "" : file.getLanguage();
 
             agentToolCallService.completeToolCall(toolCallId);
-            return result;
+
+            return """
+                FILE READ SUCCESSFULLY
+
+                Path: %s
+                Language: %s
+
+                Content:
+                --------------------
+                %s
+                --------------------
+                """.formatted(
+                    path,
+                    language,
+                    file.getContent()
+            );
 
         } catch (Exception e) {
 
-            String errorJson = """
-            {
-              "success": false,
-              "error": "READ_FILE_ERROR",
-              "path": "%s",
-              "message": "%s"
-            }
-            """.formatted(
-                    path,
-                    escapeJson(e.getMessage())
-            );
+            String message =
+                    e.getMessage() == null
+                            ? "Unknown error while reading file"
+                            : e.getMessage();
 
-            agentToolCallService.failToolCall(toolCallId, e.getMessage());
-            return errorJson;
+            agentToolCallService.failToolCall(toolCallId, message);
+
+            return """
+                READ FILE ERROR
+
+                Path: %s
+                Error: %s
+
+                Do not repeatedly call readFile for this path.
+                """.formatted(path, message);
         }
     }
 

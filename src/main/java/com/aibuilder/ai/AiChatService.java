@@ -1,6 +1,8 @@
 package com.aibuilder.ai;
 
 import com.aibuilder.ai.dto.AiChatResponse;
+import com.aibuilder.agent.entity.AgentRun;
+import com.aibuilder.agent.service.AgentRunService;
 import com.aibuilder.conversation.dto.CreateMessageRequest;
 import com.aibuilder.conversation.service.ConversationService;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +13,8 @@ import org.springframework.stereotype.Service;
 public class AiChatService {
 
     private final ConversationService conversationService;
-    private final AiAgentService aiAgentService;
+    private final AgentRunService agentRunService;
+    private final AiAgentAsyncService aiAgentAsyncService;
 
     public AiChatResponse chat(
             Long projectId,
@@ -31,23 +34,24 @@ public class AiChatService {
                 request
         );
 
-        // Run AI agent
-        AiAgentService.AgentResult result =
-                aiAgentService.run(
+        // Create run immediately
+        AgentRun agentRun =
+                agentRunService.startRun(
                         projectId,
                         conversationId
                 );
 
-        // Save assistant response
-        conversationService.addAssistantMessage(
+        // Start AI in background
+        aiAgentAsyncService.execute(
                 projectId,
                 conversationId,
-                result.response()
+                agentRun.getId()
         );
 
+        // Return immediately
         return new AiChatResponse(
-                result.agentRunId(),
-                result.response()
+                agentRun.getId(),
+                "AI agent started"
         );
     }
 }

@@ -25,48 +25,132 @@ public class AiPlannerService {
         }
 
         String prompt = """
-                You are the planning agent of an AI application builder.
+        You are the planning agent of an AI application builder.
 
-                The builder can create:
-                - Websites
-                - Web applications
-                - Mobile applications
-                - Full-stack applications
+        The builder can create:
+        - Websites
+        - Web applications
+        - Mobile applications
+        - Full-stack applications
 
-                Create a step-by-step implementation plan for the user's request.
+        Your job is to create a practical execution plan that produces
+        BOTH working functionality AND a polished professional user experience.
 
-                IMPORTANT RULES:
-                - Return ONLY valid JSON.
-                - Do not use markdown.
-                - Do not add explanations outside the JSON.
-                - Create practical implementation tasks.
-                - Each task must have:
-                  title
-                  description
-                  taskOrder
-                - taskOrder must start at 1.
-                - Keep tasks in execution order.
-                - Do not create unnecessary tasks.
-                - The tasks should describe actual work the AI agent needs to perform.
+        IMPORTANT:
+        The final result must NOT look like a basic demo, plain HTML page,
+        or automatically generated template.
 
-                Required JSON format:
+        UI/UX QUALITY IS A FIRST-CLASS REQUIREMENT.
 
-                {
-                  "tasks": [
-                    {
-                      "title": "Analyze project",
-                      "description": "Inspect the existing project structure and determine what must change.",
-                      "taskOrder": 1
-                    }
-                  ]
-                }
+        For projects containing a user interface, the plan MUST account for:
 
-                Project ID:
-                %d
+        - Visual hierarchy
+        - Responsive layout
+        - Typography
+        - Color system
+        - Spacing system
+        - Navigation
+        - Hero/header when appropriate
+        - Clear calls to action
+        - Cards and content sections when appropriate
+        - Forms and interactive elements when appropriate
+        - Icons
+        - Images/visual content when appropriate
+        - Hover states
+        - Subtle transitions/animations when appropriate
+        - Mobile, tablet and desktop layouts
+        - Accessibility and readable contrast
+        - Consistent component styling
+        - Professional overall visual polish
 
-                User request:
-                %s
-                """.formatted(projectId, userRequest);
+        The visual design MUST match the user's project/domain.
+
+        Examples:
+
+        Restaurant:
+        premium food imagery, elegant typography, menu sections,
+        reservations, testimonials, location/contact.
+
+        Coffee shop:
+        warm branding, product/menu cards, story/about section,
+        location, CTA, testimonials and polished navigation.
+
+        SaaS:
+        product-focused hero, features, product preview,
+        pricing, testimonials, FAQ and strong CTA.
+
+        E-commerce:
+        product presentation, categories, product cards,
+        offers, reviews, navigation and checkout-oriented UX.
+
+        IMPORTANT PLANNING RULES:
+
+        1. Return ONLY valid JSON.
+        2. Do not use markdown.
+        3. Do not add explanations outside JSON.
+        4. Create practical implementation tasks.
+        5. Tasks must describe actual work the execution agent must perform.
+        6. Tasks must be in dependency/execution order.
+        7. taskOrder must start at 1 and increase sequentially.
+        8. Avoid unnecessary tasks.
+        9. Do not merely describe what should happen.
+        10. The plan must lead to actual code changes.
+
+        REQUIRED PLAN STRUCTURE FOR UI PROJECTS:
+
+        The plan should normally follow this progression:
+
+        Task 1:
+        Analyze the existing project and establish the UI/UX direction,
+        design language, layout structure, responsive strategy and
+        visual hierarchy for the requested product.
+
+        Task 2:
+        Implement or improve the main application/page structure,
+        including navigation, hero/header and major layout sections
+        appropriate to the domain.
+
+        Task 3:
+        Implement the main content/components and functionality.
+
+        Task 4:
+        Apply visual styling, spacing, typography, colors, imagery,
+        cards, buttons, icons and interactions.
+
+        Task 5:
+        Review responsive behavior and polish the interface for
+        mobile, tablet and desktop.
+
+        Task 6:
+        Review the complete UI for consistency, obvious visual problems,
+        broken sections, poor spacing, readability and missing UX details,
+        and improve it.
+
+        Then include any remaining functional tasks and finally the
+        build/verification work when appropriate.
+
+        IMPORTANT:
+        Do not blindly copy the examples above.
+        Adapt the design and task structure to the user's actual request.
+
+        REQUIRED JSON FORMAT:
+
+        {
+          "tasks": [
+            {
+              "title": "Analyze project and define UI/UX direction",
+              "description": "Inspect the existing project and establish the visual language, layout hierarchy, responsive strategy and component structure required for the requested product.",
+              "taskOrder": 1
+            }
+          ]
+        }
+
+        Project ID:
+        %d
+
+        User request:
+        %s
+        """.formatted(projectId, userRequest);
 
         ChatClient chatClient =
                 chatClientBuilder.build();
@@ -99,9 +183,23 @@ public class AiPlannerService {
                 return chatClient
                         .prompt()
                         .system("""
-                            You are a professional software planning agent.
+                            You are a senior product architect and UI/UX planning agent
+                            for an AI application builder.
 
-                            Produce minimal, logical, executable plans.
+                            Create minimal, logical and executable plans.
+
+                            For any project containing a user interface:
+                            - Treat UI/UX quality as mandatory.
+                            - Plan design before implementation.
+                            - Plan responsive behavior.
+                            - Plan visual hierarchy.
+                            - Plan polished interactions and component consistency.
+                            - Adapt the design language to the project's domain.
+                            - Never assume that merely functional UI is sufficient.
+
+                            The execution agent will use your plan directly,
+                            so every task must describe concrete work that can actually
+                            be implemented in project files.
 
                             Always return valid JSON matching the requested schema.
                             """)
