@@ -9,7 +9,9 @@ public record AgentPlan(
     public record PlannedTask(
             String title,
             String description,
-            Integer taskOrder
+            Integer taskOrder,
+
+            String taskType
     ) {
     }
 }

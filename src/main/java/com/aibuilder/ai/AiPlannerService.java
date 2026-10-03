@@ -96,6 +96,74 @@ public class AiPlannerService {
         9. Do not merely describe what should happen.
         10. The plan must lead to actual code changes.
 
+        TASK TYPES:
+
+        Every task MUST include a taskType.
+
+        taskType MUST be exactly one of:
+
+        ANALYSIS
+        IMPLEMENTATION
+        REVIEW
+
+        ANALYSIS:
+        Use only when the primary purpose is to inspect, understand,
+        analyze or establish direction from the existing project.
+
+        Examples:
+        - Inspect existing project structure.
+        - Determine the current architecture.
+        - Establish UI/UX direction from the existing application.
+
+        ANALYSIS tasks may inspect files without modifying them.
+
+        IMPLEMENTATION:
+        Use whenever the task requires actual project changes.
+
+        This includes:
+        - Creating files.
+        - Modifying files.
+        - Deleting files.
+        - Building UI components.
+        - Creating pages.
+        - Styling the application.
+        - Adding responsive behavior.
+        - Adding functionality.
+        - Integrating APIs.
+        - Configuring dependencies.
+        - Fixing application code.
+        - Connecting CSS or assets.
+        - Implementing frontend or backend features.
+
+        Most project-building tasks MUST be IMPLEMENTATION.
+
+        An IMPLEMENTATION task is not complete unless actual project
+        files are successfully created, modified or deleted.
+
+        REVIEW:
+        Use only when the primary purpose is final inspection,
+        quality review or verification.
+
+        Examples:
+        - Responsive review.
+        - Accessibility review.
+        - Visual consistency review.
+        - Final UI/UX review.
+
+        A REVIEW task may inspect without modifying files if no
+        problems are found.
+
+        If a REVIEW task discovers a problem that can be corrected,
+        it should modify the appropriate project files.
+
+        IMPORTANT:
+
+        Do NOT classify implementation work as ANALYSIS or REVIEW.
+
+        If a task includes both review and actual improvement,
+        and project modifications are expected, classify it as
+        IMPLEMENTATION.
+
         REQUIRED PLAN STRUCTURE FOR UI PROJECTS:
 
         The plan should normally follow this progression:
@@ -140,7 +208,20 @@ public class AiPlannerService {
             {
               "title": "Analyze project and define UI/UX direction",
               "description": "Inspect the existing project and establish the visual language, layout hierarchy, responsive strategy and component structure required for the requested product.",
-              "taskOrder": 1
+              "taskOrder": 1,
+              "taskType": "ANALYSIS"
+            },
+            {
+              "title": "Implement the application structure",
+               "description": "Create or modify the required project files and implement the main application structure, navigation, hero and primary sections.",
+               "taskOrder": 2,
+               "taskType": "IMPLEMENTATION"
+            },
+            {
+              "title": "Review responsive behavior and visual quality",
+              "description": "Inspect the completed interface for responsive behavior, consistency, accessibility and obvious visual defects. Correct discovered problems when necessary.",
+              "taskOrder": 3,
+              "taskType": "REVIEW"
             }
           ]
         }
@@ -183,26 +264,47 @@ public class AiPlannerService {
                 return chatClient
                         .prompt()
                         .system("""
-                            You are a senior product architect and UI/UX planning agent
-                            for an AI application builder.
+    You are a senior product architect and UI/UX planning agent
+    for an AI application builder.
 
-                            Create minimal, logical and executable plans.
+    Create minimal, logical and executable plans.
 
-                            For any project containing a user interface:
-                            - Treat UI/UX quality as mandatory.
-                            - Plan design before implementation.
-                            - Plan responsive behavior.
-                            - Plan visual hierarchy.
-                            - Plan polished interactions and component consistency.
-                            - Adapt the design language to the project's domain.
-                            - Never assume that merely functional UI is sufficient.
+    Every task MUST include a taskType.
 
-                            The execution agent will use your plan directly,
-                            so every task must describe concrete work that can actually
-                            be implemented in project files.
+    Valid taskType values are exactly:
 
-                            Always return valid JSON matching the requested schema.
-                            """)
+    ANALYSIS
+    IMPLEMENTATION
+    REVIEW
+
+    ANALYSIS is for inspection, understanding and planning.
+
+    IMPLEMENTATION is for any work that creates, modifies,
+    deletes, styles, configures or integrates project files.
+
+    REVIEW is for final quality inspection and verification.
+
+    Most tasks involved in actually building a project should
+    be IMPLEMENTATION.
+
+    Never classify implementation work as ANALYSIS or REVIEW
+    simply to avoid making project changes.
+
+    For any project containing a user interface:
+    - Treat UI/UX quality as mandatory.
+    - Plan design before implementation.
+    - Plan responsive behavior.
+    - Plan visual hierarchy.
+    - Plan polished interactions and component consistency.
+    - Adapt the design language to the project's domain.
+    - Never assume that merely functional UI is sufficient.
+
+    The execution agent will use your plan directly,
+    so every task must describe concrete work that can actually
+    be implemented in project files.
+
+    Always return valid JSON matching the requested schema.
+    """)
                         .user(prompt)
                         .call()
                         .content();
@@ -315,6 +417,28 @@ public class AiPlannerService {
 
                 throw new RuntimeException(
                         "AI planner returned a task without a description"
+                );
+            }
+            if (task.taskType() == null ||
+                    task.taskType().isBlank()) {
+
+                throw new RuntimeException(
+                        "AI planner returned a task without a taskType"
+                );
+            }
+
+            String taskType =
+                    task.taskType()
+                            .trim()
+                            .toUpperCase();
+
+            if (!taskType.equals("ANALYSIS") &&
+                    !taskType.equals("IMPLEMENTATION") &&
+                    !taskType.equals("REVIEW")) {
+
+                throw new RuntimeException(
+                        "Invalid taskType returned by AI planner: "
+                                + task.taskType()
                 );
             }
 

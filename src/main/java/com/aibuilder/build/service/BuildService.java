@@ -25,6 +25,7 @@ public class BuildService {
     private final AgentRunRepository agentRunRepository;
     private final ProjectWorkspaceService projectWorkspaceService;
     private final BuildExecutorService buildExecutorService;
+    private final ProjectIntegrityService projectIntegrityService;
 
     @Transactional
     public BuildRun createBuild(
@@ -141,6 +142,64 @@ public class BuildService {
 
             StringBuilder completeOutput =
                     new StringBuilder();
+
+            ProjectIntegrityService.ValidationResult integrityResult =
+                    projectIntegrityService.validate(
+                            workspace
+                    );
+
+
+            if (!integrityResult.warnings().isEmpty()) {
+
+                completeOutput
+                        .append(
+                                "===== PROJECT INTEGRITY WARNINGS =====\n"
+                        )
+                        .append(
+                                integrityResult.formattedWarnings()
+                        )
+                        .append("\n\n");
+            }
+
+
+            if (!integrityResult.valid()) {
+
+                completeOutput
+                        .append(
+                                "===== PROJECT INTEGRITY FAILED =====\n"
+                        )
+                        .append(
+                                integrityResult.formattedErrors()
+                        )
+                        .append("\n");
+
+
+                buildRun.setStatus(
+                        BuildStatus.FAILED
+                );
+
+                buildRun.setOutput(
+                        completeOutput.toString()
+                );
+
+                buildRun.setErrorOutput(
+                        integrityResult.formattedErrors()
+                );
+
+                buildRun.setCompletedAt(
+                        LocalDateTime.now()
+                );
+
+
+                return buildRunRepository.save(
+                        buildRun
+                );
+            }
+
+
+            completeOutput.append(
+                    "===== PROJECT INTEGRITY PASSED =====\n\n"
+            );
 
 
             if (Files.exists(

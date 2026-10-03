@@ -52,5 +52,9 @@ server:
   port: 8080
 
 jwt:
-  secret:  ${JWT_SECRET}
+  secret: ${JWT_SECRET}
   expiration: 86400000
+
+app:
+  preview:
+    base-url: ${PREVIEW_BASE_URL:http://localhost:8080}

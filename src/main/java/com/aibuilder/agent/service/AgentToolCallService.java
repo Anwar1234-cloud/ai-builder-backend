@@ -179,4 +179,73 @@ public class AgentToolCallService {
                         agentTaskId
                 );
     }
+
+    @Transactional(readOnly = true)
+    public boolean hasSuccessfulModification(
+            Long agentTaskId
+    ) {
+
+        return getToolCallsForTask(agentTaskId)
+                .stream()
+                .anyMatch(toolCall -> {
+
+                    if (toolCall.getStatus()
+                            != AgentToolCallStatus.COMPLETED) {
+                        return false;
+                    }
+
+                    String toolName =
+                            toolCall.getToolName();
+
+                    if (toolName == null) {
+                        return false;
+                    }
+
+                    return toolName.equals("createFile")
+                            || toolName.equals("writeFile")
+                            || toolName.equals("deleteFile");
+                });
+    }
+
+
+    @Transactional(readOnly = true)
+    public boolean hasAnySuccessfulToolCall(
+            Long agentTaskId
+    ) {
+
+        return getToolCallsForTask(agentTaskId)
+                .stream()
+                .anyMatch(toolCall ->
+                        toolCall.getStatus()
+                                == AgentToolCallStatus.COMPLETED
+                );
+    }
+
+
+    @Transactional(readOnly = true)
+    public List<AgentToolCall> getSuccessfulModifications(
+            Long agentTaskId
+    ) {
+
+        return getToolCallsForTask(agentTaskId)
+                .stream()
+                .filter(toolCall ->
+                        toolCall.getStatus()
+                                == AgentToolCallStatus.COMPLETED
+                )
+                .filter(toolCall -> {
+
+                    String toolName =
+                            toolCall.getToolName();
+
+                    if (toolName == null) {
+                        return false;
+                    }
+
+                    return toolName.equals("createFile")
+                            || toolName.equals("writeFile")
+                            || toolName.equals("deleteFile");
+                })
+                .toList();
+    }
 }

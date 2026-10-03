@@ -12,6 +12,7 @@ import com.aibuilder.agent.service.AgentToolCallService;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
+import com.aibuilder.workspace.service.WorkspaceFileCacheService;
 import java.util.Optional;
 
 import java.util.List;
@@ -26,6 +27,8 @@ public class ProjectTools {
     private final ProjectRepository projectRepository;
     private final AgentToolCallService agentToolCallService;
     private final ObjectMapper objectMapper;
+    private final WorkspaceFileCacheService workspaceFileCacheService;
+
 
     @Tool(
             name = "listFiles",
@@ -149,10 +152,43 @@ public class ProjectTools {
         try {
             validatePath(path);
 
-            Optional<ProjectFile> fileOpt =
-                    projectFileRepository.findByProjectIdAndPath(projectId, path);
+// First check whether this file was already
+// read during this agent run.
+            String cachedContent =
+                    workspaceFileCacheService.get(
+                            agentRunId,
+                            path
+                    );
 
-            // File does not exist
+            if (cachedContent != null) {
+
+                agentToolCallService.completeToolCall(
+                        toolCallId
+                );
+
+                return """
+            FILE READ SUCCESSFULLY
+
+            Path: %s
+            Cached: true
+
+            Content:
+            --------------------
+            %s
+            --------------------
+            """.formatted(
+                        path,
+                        cachedContent
+                );
+            }
+
+            Optional<ProjectFile> fileOpt =
+                    projectFileRepository.findByProjectIdAndPath(
+                            projectId,
+                            path
+                    );
+
+
             if (fileOpt.isEmpty()) {
 
                 agentToolCallService.completeToolCall(toolCallId);
@@ -171,7 +207,20 @@ public class ProjectTools {
             ProjectFile file = fileOpt.get();
 
             String language =
-                    file.getLanguage() == null ? "" : file.getLanguage();
+                    file.getLanguage() == null
+                            ? ""
+                            : file.getLanguage();
+
+            String fileContent =
+                    file.getContent() == null
+                            ? ""
+                            : file.getContent();
+
+            workspaceFileCacheService.put(
+                    agentRunId,
+                    path,
+                    fileContent
+            );
 
             agentToolCallService.completeToolCall(toolCallId);
 
@@ -188,7 +237,7 @@ public class ProjectTools {
                 """.formatted(
                     path,
                     language,
-                    file.getContent()
+                    fileContent
             );
 
         } catch (Exception e) {
@@ -208,6 +257,187 @@ public class ProjectTools {
 
                 Do not repeatedly call readFile for this path.
                 """.formatted(path, message);
+        }
+    }
+    @Tool(
+            name = "readFiles",
+            description = "Read the contents of multiple existing project files in one call. " +
+                    "Use this when several files are needed for understanding or UI work. " +
+                    "Do not use this just to check whether files exist; use the workspace manifest for that."
+    )
+    public String readFiles(
+            @ToolParam(description = "List of project-relative file paths to read")
+            List<String> paths,
+            ToolContext context
+    ) {
+
+        if (paths == null || paths.isEmpty()) {
+            return """
+                {
+                  "success": false,
+                  "error": "NO_FILES",
+                  "message": "No file paths were provided."
+                }
+                """;
+        }
+
+        Long projectId = getProjectId(context);
+        Long agentRunId = getAgentRunId(context);
+        Long agentTaskId = getAgentTaskId(context);
+
+        String targetPath =
+                String.join(", ", paths);
+
+        Long toolCallId =
+                agentToolCallService.startToolCall(
+                        agentRunId,
+                        agentTaskId,
+                        "readFiles",
+                        targetPath
+                );
+
+        try {
+
+            StringBuilder result =
+                    new StringBuilder();
+
+            result.append(
+                    "{\"success\":true,\"files\":["
+            );
+
+            for (int i = 0; i < paths.size(); i++) {
+
+                String path = paths.get(i);
+
+                validatePath(path);
+
+                if (i > 0) {
+                    result.append(",");
+                }
+
+
+
+                String cachedContent =
+                        workspaceFileCacheService.get(
+                                agentRunId,
+                                path
+                        );
+
+                if (cachedContent != null) {
+
+                    result.append("""
+                        {
+                          "path": %s,
+                          "success": true,
+                          "content": %s,
+                          "cached": true
+                        }
+                        """.formatted(
+                            objectMapper.writeValueAsString(path),
+                            objectMapper.writeValueAsString(cachedContent)
+                    ));
+
+                    continue;
+                }
+
+
+
+                Optional<ProjectFile> fileOpt =
+                        projectFileRepository
+                                .findByProjectIdAndPath(
+                                        projectId,
+                                        path
+                                );
+
+                if (fileOpt.isEmpty()) {
+
+                    result.append("""
+                        {
+                          "path": %s,
+                          "success": false,
+                          "error": "FILE_NOT_FOUND"
+                        }
+                        """.formatted(
+                            objectMapper.writeValueAsString(path)
+                    ));
+
+                    continue;
+                }
+
+                ProjectFile file =
+                        fileOpt.get();
+
+                String fileContent =
+                        file.getContent() == null
+                                ? ""
+                                : file.getContent();
+
+
+
+                workspaceFileCacheService.put(
+                        agentRunId,
+                        path,
+                        fileContent
+                );
+
+
+
+                result.append("""
+                    {
+                      "path": %s,
+                      "success": true,
+                      "language": %s,
+                      "content": %s,
+                      "cached": false
+                    }
+                    """.formatted(
+                        objectMapper.writeValueAsString(path),
+
+                        objectMapper.writeValueAsString(
+                                file.getLanguage() == null
+                                        ? ""
+                                        : file.getLanguage()
+                        ),
+
+                        objectMapper.writeValueAsString(
+                                fileContent
+                        )
+                ));
+            }
+
+            result.append("]}");
+
+            String response =
+                    result.toString();
+
+            agentToolCallService.completeToolCall(
+                    toolCallId
+            );
+
+            return response;
+
+        } catch (Exception e) {
+
+            String errorJson = """
+                {
+                  "success": false,
+                  "error": "READ_FILES_ERROR",
+                  "message": %s
+                }
+                """.formatted(
+                    objectMapper.writeValueAsString(
+                            e.getMessage() == null
+                                    ? "Unknown error"
+                                    : e.getMessage()
+                    )
+            );
+
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    errorJson
+            );
+
+            return errorJson;
         }
     }
 
@@ -307,7 +537,16 @@ public class ProjectTools {
 
             projectFileRepository.save(file);
 
-            agentToolCallService.completeToolCall(toolCallId);
+
+            workspaceFileCacheService.put(
+                    agentRunId,
+                    path,
+                    content
+            );
+
+            agentToolCallService.completeToolCall(
+                    toolCallId
+            );
 
             return "File updated successfully: " + path;
 
@@ -420,7 +659,16 @@ public class ProjectTools {
 
             projectFileRepository.save(file);
 
-            agentToolCallService.completeToolCall(toolCallId);
+
+            workspaceFileCacheService.put(
+                    agentRunId,
+                    path,
+                    content
+            );
+
+            agentToolCallService.completeToolCall(
+                    toolCallId
+            );
 
             return "File created successfully: " + path;
 
@@ -530,7 +778,16 @@ public class ProjectTools {
 
             projectFileRepository.delete(file);
 
-            agentToolCallService.completeToolCall(toolCallId);
+
+
+            workspaceFileCacheService.remove(
+                    agentRunId,
+                    path
+            );
+
+            agentToolCallService.completeToolCall(
+                    toolCallId
+            );
 
             return "File deleted successfully: " + path;
 

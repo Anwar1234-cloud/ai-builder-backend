@@ -7,6 +7,7 @@ import com.aibuilder.agent.repository.AgentRunRepository;
 import com.aibuilder.agent.repository.AgentTaskRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import com.aibuilder.agent.entity.AgentTaskType;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -27,20 +28,51 @@ public class AgentTaskService {
             Integer taskOrder
     ) {
 
-        AgentRun agentRun = agentRunRepository.findById(agentRunId)
-                .orElseThrow(() ->
-                        new RuntimeException(
-                                "Agent run not found: " + agentRunId
-                        )
-                );
+        return createTask(
+                agentRunId,
+                title,
+                description,
+                taskOrder,
+                AgentTaskType.IMPLEMENTATION
+        );
+    }
 
-        AgentTask task = new AgentTask();
+
+    @Transactional
+    public AgentTask createTask(
+            Long agentRunId,
+            String title,
+            String description,
+            Integer taskOrder,
+            AgentTaskType taskType
+    ) {
+
+        AgentRun agentRun =
+                agentRunRepository.findById(agentRunId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Agent run not found: "
+                                                + agentRunId
+                                )
+                        );
+
+        AgentTask task =
+                new AgentTask();
 
         task.setAgentRun(agentRun);
         task.setTitle(title);
         task.setDescription(description);
         task.setTaskOrder(taskOrder);
-        task.setStatus(AgentTaskStatus.PENDING);
+
+        task.setTaskType(
+                taskType == null
+                        ? AgentTaskType.IMPLEMENTATION
+                        : taskType
+        );
+
+        task.setStatus(
+                AgentTaskStatus.PENDING
+        );
 
         return agentTaskRepository.save(task);
     }
@@ -125,17 +157,41 @@ public class AgentTaskService {
             List<com.aibuilder.ai.dto.AgentPlan.PlannedTask> plannedTasks
     ) {
 
-        List<AgentTask> tasks = new java.util.ArrayList<>();
+        List<AgentTask> tasks =
+                new java.util.ArrayList<>();
 
         for (com.aibuilder.ai.dto.AgentPlan.PlannedTask plannedTask
                 : plannedTasks) {
 
-            AgentTask task = createTask(
-                    agentRunId,
-                    plannedTask.title(),
-                    plannedTask.description(),
-                    plannedTask.taskOrder()
-            );
+            AgentTaskType taskType;
+
+            try {
+
+                taskType =
+                        AgentTaskType.valueOf(
+                                plannedTask
+                                        .taskType()
+                                        .trim()
+                                        .toUpperCase()
+                        );
+
+            } catch (Exception e) {
+
+                throw new RuntimeException(
+                        "Invalid planned task type: "
+                                + plannedTask.taskType(),
+                        e
+                );
+            }
+
+            AgentTask task =
+                    createTask(
+                            agentRunId,
+                            plannedTask.title(),
+                            plannedTask.description(),
+                            plannedTask.taskOrder(),
+                            taskType
+                    );
 
             tasks.add(task);
         }

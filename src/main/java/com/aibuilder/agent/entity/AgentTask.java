@@ -37,6 +37,10 @@ public class AgentTask {
     private String description;
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private AgentTaskType taskType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private AgentTaskStatus status;
 
@@ -59,6 +63,10 @@ public class AgentTask {
 
         if (status == null) {
             status = AgentTaskStatus.PENDING;
+        }
+
+        if (taskType == null) {
+            taskType = AgentTaskType.IMPLEMENTATION;
         }
 
         if (taskOrder == null) {

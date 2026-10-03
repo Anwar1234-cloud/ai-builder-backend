@@ -1,6 +1,9 @@
 package com.aibuilder.preview.controller;
 
 import com.aibuilder.preview.service.PreviewService;
+import com.aibuilder.preview.service.ScreenshotService;
+import com.aibuilder.visual.VisualReviewService;
+import com.aibuilder.visual.VisualReviewResult;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -19,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 public class PreviewController {
 
     private final PreviewService previewService;
+    private final ScreenshotService screenshotService;
+    private final VisualReviewService visualReviewService;
 
     @GetMapping("/{buildId}")
     public ResponseEntity<String> previewIndex(
@@ -133,5 +138,43 @@ public class PreviewController {
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .body(resource);
+    }
+
+    @PostMapping("/{buildId}/screenshot")
+    public ResponseEntity<String> captureScreenshot(
+            @PathVariable Long projectId,
+            @PathVariable Long buildId
+    ) {
+
+        var screenshot =
+                screenshotService
+                        .captureDesktopScreenshot(
+                                projectId,
+                                buildId
+                        );
+
+        return ResponseEntity.ok(
+                screenshot.toString()
+        );
+    }
+    @PostMapping("/{buildId}/visual-review")
+    public ResponseEntity<VisualReviewResult> reviewVisuals(
+            @PathVariable Long projectId,
+            @PathVariable Long buildId
+    ) {
+
+        ScreenshotService.ScreenshotResult screenshots =
+                screenshotService.captureScreenshots(
+                        projectId,
+                        buildId
+                );
+
+        VisualReviewResult result =
+                visualReviewService.review(
+                        screenshots.viewportScreenshot(),
+                        screenshots.fullPageScreenshot()
+                );
+
+        return ResponseEntity.ok(result);
     }
 }
