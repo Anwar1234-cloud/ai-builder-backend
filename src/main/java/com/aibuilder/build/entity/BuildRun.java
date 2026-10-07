@@ -73,5 +73,17 @@ public class BuildRun {
         if (startedAt == null) {
             startedAt = LocalDateTime.now();
         }
+        if (visualValidationStatus == null) {
+            visualValidationStatus =
+                    VisualValidationStatus.NOT_CHECKED;
+        }
     }
+    @Enumerated(EnumType.STRING)
+    @Column(
+            name = "visual_validation_status",
+            nullable = false,
+            length = 30
+    )
+    private VisualValidationStatus visualValidationStatus =
+            VisualValidationStatus.NOT_CHECKED;
 }

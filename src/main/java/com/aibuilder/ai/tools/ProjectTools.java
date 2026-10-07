@@ -17,7 +17,7 @@ import java.util.Optional;
 
 import java.util.List;
 
-import static io.micrometer.core.instrument.util.StringEscapeUtils.escapeJson;
+
 
 @Component
 @RequiredArgsConstructor
@@ -478,16 +478,9 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Long projectId =
-                ((Number) toolContext
-                        .getContext()
-                        .get("projectId"))
-                        .longValue();
-
-        Long agentRunId =
-                getAgentRunId(toolContext);
-        Long agentTaskId =
-                getAgentTaskId(toolContext);
+        Long projectId = getProjectId(toolContext);
+        Long agentRunId = getAgentRunId(toolContext);
+        Long agentTaskId = getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
@@ -499,11 +492,7 @@ public class ProjectTools {
 
         try {
 
-            if (path == null || path.isBlank()) {
-                throw new IllegalArgumentException(
-                        "File path is required"
-                );
-            }
+            validatePath(path);
 
             if (content == null) {
                 throw new IllegalArgumentException(
@@ -511,32 +500,40 @@ public class ProjectTools {
                 );
             }
 
-            if (path.startsWith("/")
-                    || path.startsWith("\\")
-                    || path.contains("..")) {
-
-                throw new IllegalArgumentException(
-                        "Invalid project file path: " + path
-                );
-            }
-
-            ProjectFile file =
+            Optional<ProjectFile> fileOpt =
                     projectFileRepository
                             .findByProjectIdAndPath(
                                     projectId,
                                     path
-                            )
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                            "File not found: " + path
-                                    )
                             );
+
+            if (fileOpt.isEmpty()) {
+
+                String response = """
+                    {
+                      "success": false,
+                      "error": "FILE_NOT_FOUND",
+                      "path": %s,
+                      "message": "The file does not exist. Use createFile if this task requires a new file."
+                    }
+                    """.formatted(
+                        toJson(path)
+                );
+
+                agentToolCallService.failToolCall(
+                        toolCallId,
+                        response
+                );
+
+                return response;
+            }
+
+            ProjectFile file = fileOpt.get();
 
             file.setContent(content);
             file.setLanguage(detectLanguage(path));
 
             projectFileRepository.save(file);
-
 
             workspaceFileCacheService.put(
                     agentRunId,
@@ -548,16 +545,42 @@ public class ProjectTools {
                     toolCallId
             );
 
-            return "File updated successfully: " + path;
+            return """
+                {
+                  "success": true,
+                  "action": "UPDATED",
+                  "path": %s,
+                  "message": "File updated successfully."
+                }
+                """.formatted(
+                    toJson(path)
+            );
 
         } catch (Exception e) {
 
-            agentToolCallService.failToolCall(
-                    toolCallId,
-                    e.getMessage()
+            String message =
+                    e.getMessage() == null
+                            ? "Unknown error while writing file"
+                            : e.getMessage();
+
+            String response = """
+                {
+                  "success": false,
+                  "error": "WRITE_FILE_ERROR",
+                  "path": %s,
+                  "message": %s
+                }
+                """.formatted(
+                    toJson(path),
+                    toJson(message)
             );
 
-            throw e;
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    response
+            );
+
+            return response;
         }
     }
 
@@ -585,16 +608,9 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Long projectId =
-                ((Number) toolContext
-                        .getContext()
-                        .get("projectId"))
-                        .longValue();
-
-        Long agentRunId =
-                getAgentRunId(toolContext);
-        Long agentTaskId =
-                getAgentTaskId(toolContext);
+        Long projectId = getProjectId(toolContext);
+        Long agentRunId = getAgentRunId(toolContext);
+        Long agentTaskId = getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
@@ -606,11 +622,7 @@ public class ProjectTools {
 
         try {
 
-            if (path == null || path.isBlank()) {
-                throw new IllegalArgumentException(
-                        "File path is required"
-                );
-            }
+            validatePath(path);
 
             if (content == null) {
                 throw new IllegalArgumentException(
@@ -618,21 +630,11 @@ public class ProjectTools {
                 );
             }
 
-            if (path.startsWith("/")
-                    || path.startsWith("\\")
-                    || path.contains("..")) {
-
-                throw new IllegalArgumentException(
-                        "Invalid project file path: " + path
-                );
-            }
-
             Project project =
                     projectRepository.findById(projectId)
                             .orElseThrow(() ->
                                     new IllegalArgumentException(
-                                            "Project not found: "
-                                                    + projectId
+                                            "Project not found: " + projectId
                                     )
                             );
 
@@ -644,13 +646,27 @@ public class ProjectTools {
                             );
 
             if (exists) {
-                throw new IllegalArgumentException(
-                        "File already exists: " + path
+
+                String response = """
+                    {
+                      "success": false,
+                      "error": "FILE_ALREADY_EXISTS",
+                      "path": %s,
+                      "message": "The file already exists. Use readFile and writeFile instead."
+                    }
+                    """.formatted(
+                        toJson(path)
                 );
+
+                agentToolCallService.failToolCall(
+                        toolCallId,
+                        response
+                );
+
+                return response;
             }
 
-            ProjectFile file =
-                    new ProjectFile();
+            ProjectFile file = new ProjectFile();
 
             file.setPath(path);
             file.setContent(content);
@@ -658,7 +674,6 @@ public class ProjectTools {
             file.setProject(project);
 
             projectFileRepository.save(file);
-
 
             workspaceFileCacheService.put(
                     agentRunId,
@@ -670,18 +685,42 @@ public class ProjectTools {
                     toolCallId
             );
 
-            return "File created successfully: " + path;
+            return """
+                {
+                  "success": true,
+                  "action": "CREATED",
+                  "path": %s,
+                  "message": "File created successfully."
+                }
+                """.formatted(
+                    toJson(path)
+            );
 
         } catch (Exception e) {
 
-            agentToolCallService.failToolCall(
-                    toolCallId,
-                    e.getMessage()
+            String message =
+                    e.getMessage() == null
+                            ? "Unknown error while creating file"
+                            : e.getMessage();
+
+            String response = """
+                {
+                  "success": false,
+                  "error": "CREATE_FILE_ERROR",
+                  "path": %s,
+                  "message": %s
+                }
+                """.formatted(
+                    toJson(path),
+                    toJson(message)
             );
 
-            return "TOOL_ERROR: " + e.getMessage()
-                    + ". The operation was not completed. "
-                    + "Inspect the existing project and choose the appropriate action.";
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    response
+            );
+
+            return response;
         }
     }
 
@@ -728,16 +767,9 @@ public class ProjectTools {
             ToolContext toolContext
     ) {
 
-        Long projectId =
-                ((Number) toolContext
-                        .getContext()
-                        .get("projectId"))
-                        .longValue();
-
-        Long agentRunId =
-                getAgentRunId(toolContext);
-        Long agentTaskId =
-                getAgentTaskId(toolContext);
+        Long projectId = getProjectId(toolContext);
+        Long agentRunId = getAgentRunId(toolContext);
+        Long agentTaskId = getAgentTaskId(toolContext);
 
         Long toolCallId =
                 agentToolCallService.startToolCall(
@@ -749,36 +781,39 @@ public class ProjectTools {
 
         try {
 
-            if (path == null || path.isBlank()) {
-                throw new IllegalArgumentException(
-                        "File path is required"
-                );
-            }
+            validatePath(path);
 
-            if (path.startsWith("/")
-                    || path.startsWith("\\")
-                    || path.contains("..")) {
-
-                throw new IllegalArgumentException(
-                        "Invalid project file path: " + path
-                );
-            }
-
-            ProjectFile file =
+            Optional<ProjectFile> fileOpt =
                     projectFileRepository
                             .findByProjectIdAndPath(
                                     projectId,
                                     path
-                            )
-                            .orElseThrow(() ->
-                                    new IllegalArgumentException(
-                                            "File not found: " + path
-                                    )
                             );
 
-            projectFileRepository.delete(file);
+            if (fileOpt.isEmpty()) {
 
+                String response = """
+                    {
+                      "success": false,
+                      "error": "FILE_NOT_FOUND",
+                      "path": %s,
+                      "message": "The file does not exist. Nothing was deleted."
+                    }
+                    """.formatted(
+                        toJson(path)
+                );
 
+                agentToolCallService.failToolCall(
+                        toolCallId,
+                        response
+                );
+
+                return response;
+            }
+
+            projectFileRepository.delete(
+                    fileOpt.get()
+            );
 
             workspaceFileCacheService.remove(
                     agentRunId,
@@ -789,16 +824,42 @@ public class ProjectTools {
                     toolCallId
             );
 
-            return "File deleted successfully: " + path;
+            return """
+                {
+                  "success": true,
+                  "action": "DELETED",
+                  "path": %s,
+                  "message": "File deleted successfully."
+                }
+                """.formatted(
+                    toJson(path)
+            );
 
         } catch (Exception e) {
 
-            agentToolCallService.failToolCall(
-                    toolCallId,
-                    e.getMessage()
+            String message =
+                    e.getMessage() == null
+                            ? "Unknown error while deleting file"
+                            : e.getMessage();
+
+            String response = """
+                {
+                  "success": false,
+                  "error": "DELETE_FILE_ERROR",
+                  "path": %s,
+                  "message": %s
+                }
+                """.formatted(
+                    toJson(path),
+                    toJson(message)
             );
 
-            throw e;
+            agentToolCallService.failToolCall(
+                    toolCallId,
+                    response
+            );
+
+            return response;
         }
     }
 
@@ -843,5 +904,15 @@ public class ProjectTools {
                 .replace("\r", "\\r")
                 .replace("\n", "\\n")
                 .replace("\t", "\\t");
+    }
+
+    private String toJson(String value) {
+        try {
+            return objectMapper.writeValueAsString(
+                    value == null ? "" : value
+            );
+        } catch (Exception e) {
+            return "\"\"";
+        }
     }
 }

@@ -58,3 +58,9 @@ jwt:
 app:
   preview:
     base-url: ${PREVIEW_BASE_URL:http://localhost:8080}
+
+  deployment:
+    vercel:
+      token: ${VERCEL_TOKEN:}
+      team-id: ${VERCEL_TEAM_ID:}
+      api-base-url: https://api.vercel.com

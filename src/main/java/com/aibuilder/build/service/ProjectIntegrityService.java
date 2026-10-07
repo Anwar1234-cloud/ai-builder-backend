@@ -80,6 +80,17 @@ public class ProjectIntegrityService {
                         warnings
                 );
             }
+            if (Files.exists(packageJson)
+                    && Files.exists(srcDirectory)) {
+
+                validateTailwindIntegration(
+                        workspace,
+                        packageJson,
+                        srcDirectory,
+                        errors,
+                        warnings
+                );
+            }
 
         } catch (IOException e) {
 
@@ -399,6 +410,194 @@ public class ProjectIntegrityService {
         }
 
         return null;
+    }
+
+    private void validateTailwindIntegration(
+            Path workspace,
+            Path packageJson,
+            Path srcDirectory,
+            List<String> errors,
+            List<String> warnings
+    ) throws IOException {
+
+        String packageContent =
+                Files.readString(
+                        packageJson,
+                        StandardCharsets.UTF_8
+                );
+
+
+        if (!packageContent.contains("\"tailwindcss\"")) {
+            return;
+        }
+
+        List<Path> cssFiles;
+
+        try (var paths = Files.walk(srcDirectory)) {
+
+            cssFiles =
+                    paths.filter(Files::isRegularFile)
+                            .filter(path ->
+                                    path.getFileName()
+                                            .toString()
+                                            .toLowerCase()
+                                            .endsWith(".css")
+                            )
+                            .toList();
+        }
+
+        boolean usesTailwindV3Directives = false;
+
+        for (Path cssFile : cssFiles) {
+
+            String css =
+                    Files.readString(
+                            cssFile,
+                            StandardCharsets.UTF_8
+                    );
+
+            if (css.contains("@tailwind base")
+                    || css.contains("@tailwind components")
+                    || css.contains("@tailwind utilities")) {
+
+                usesTailwindV3Directives = true;
+                break;
+            }
+        }
+
+
+        if (!usesTailwindV3Directives) {
+
+            warnings.add(
+                    "Tailwind CSS is declared in package.json, "
+                            + "but no Tailwind v3 @tailwind directives "
+                            + "were detected under src."
+            );
+
+            return;
+        }
+
+        Path postcssConfig =
+                findFirstExisting(
+                        workspace,
+                        "postcss.config.js",
+                        "postcss.config.cjs",
+                        "postcss.config.mjs"
+                );
+
+        if (postcssConfig == null) {
+
+            errors.add(
+                    "POSTCSS_CONFIGURATION_ERROR: "
+                            + "Tailwind CSS v3 directives are used, "
+                            + "but no PostCSS configuration file exists. "
+                            + "Create postcss.config.js, "
+                            + "postcss.config.cjs or postcss.config.mjs "
+                            + "and configure the tailwindcss PostCSS plugin."
+            );
+
+            return;
+        }
+
+        String postcssContent =
+                Files.readString(
+                        postcssConfig,
+                        StandardCharsets.UTF_8
+                );
+
+        boolean hasTailwindPlugin =
+                containsPostCssPlugin(
+                        postcssContent,
+                        "tailwindcss"
+                );
+
+        if (!hasTailwindPlugin) {
+
+            errors.add(
+                    "POSTCSS_CONFIGURATION_ERROR: "
+                            + relative(workspace, postcssConfig)
+                            + " does not configure the tailwindcss "
+                            + "PostCSS plugin even though Tailwind CSS v3 "
+                            + "directives are used. "
+                            + "Do not place Tailwind theme/content "
+                            + "configuration in the PostCSS config. "
+                            + "Keep content/theme configuration in "
+                            + "tailwind.config.js and configure "
+                            + "tailwindcss as a PostCSS plugin here."
+            );
+        }
+
+        boolean suspiciousTailwindConfigCopy =
+                postcssContent.contains("content:")
+                        && postcssContent.contains("theme:")
+                        && !hasTailwindPlugin;
+
+        if (suspiciousTailwindConfigCopy) {
+
+            errors.add(
+                    "POSTCSS_CONFIGURATION_ERROR: "
+                            + relative(workspace, postcssConfig)
+                            + " appears to contain Tailwind theme/content "
+                            + "configuration instead of PostCSS plugin "
+                            + "configuration. "
+                            + "tailwind.config.js and postcss.config.js "
+                            + "serve different purposes."
+            );
+        }
+
+        Path tailwindConfig =
+                findFirstExisting(
+                        workspace,
+                        "tailwind.config.js",
+                        "tailwind.config.cjs",
+                        "tailwind.config.mjs",
+                        "tailwind.config.ts"
+                );
+
+        if (tailwindConfig == null) {
+
+            errors.add(
+                    "TAILWIND_CONFIGURATION_ERROR: "
+                            + "Tailwind CSS v3 directives are used, "
+                            + "but no Tailwind configuration file exists."
+            );
+        }
+    }
+
+    private Path findFirstExisting(
+            Path workspace,
+            String... names
+    ) {
+
+        for (String name : names) {
+
+            Path candidate =
+                    workspace.resolve(name);
+
+            if (Files.isRegularFile(candidate)) {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+
+    private boolean containsPostCssPlugin(
+            String content,
+            String pluginName
+    ) {
+
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+
+
+        return content.contains("tailwindcss:")
+                || content.contains("\"tailwindcss\"")
+                || content.contains("'tailwindcss'")
+                || content.contains("require(\"tailwindcss\")")
+                || content.contains("require('tailwindcss')");
     }
 
 

@@ -290,6 +290,13 @@ public class AiAgentService {
 
             if (!review.needsFix()) {
 
+                currentBuild =
+                        buildService
+                                .markVisualValidationPassed(
+                                        currentBuild.getId()
+                                );
+
+
                 System.out.println(
                         "[VISUAL] Visual validation PASSED "
                                 + "for build "
@@ -298,6 +305,11 @@ public class AiAgentService {
 
                 return currentBuild;
             }
+            currentBuild =
+                    buildService
+                            .markVisualValidationFailed(
+                                    currentBuild.getId()
+                            );
 
 
 
@@ -1062,6 +1074,30 @@ public class AiAgentService {
                                                 Keep layouts responsive and ensure
                                                 styling is actually connected to the
                                                 application.
+                                                        When using Tailwind CSS, the complete styling
+                                                        toolchain MUST be internally consistent.
+                                                                                                        
+                                                        For Tailwind CSS v3 projects:
+                                                        - package.json must contain compatible Tailwind,
+                                                          PostCSS and Autoprefixer dependencies;
+                                                        - tailwind.config.js must contain Tailwind content,
+                                                          theme and plugin configuration;
+                                                        - postcss.config.js must configure PostCSS plugins
+                                                          such as tailwindcss and autoprefixer;
+                                                        - postcss.config.js must NEVER contain a copied
+                                                          Tailwind theme/content configuration;
+                                                        - the application's stylesheet may use the
+                                                          @tailwind base, components and utilities
+                                                          directives;
+                                                        - that stylesheet must be imported from the
+                                                          application entry/component tree.
+                                                                                                        
+                                                        Do not confuse tailwind.config.js with
+                                                        postcss.config.js.
+                                                                                                        
+                                                        When creating framework configuration files,
+                                                        verify that each file contains configuration for
+                                                        the tool represented by its filename.
     
                                                 Stop using tools when the assigned
                                                 task has actually been completed.
@@ -1208,6 +1244,12 @@ public class AiAgentService {
              attempt <= MAX_BUILD_ATTEMPTS;
              attempt++) {
 
+            System.out.println(
+                    "[BUILD] Starting build attempt "
+                            + attempt
+                            + "/"
+                            + MAX_BUILD_ATTEMPTS
+            );
 
             latestBuild =
                     buildService.createBuild(
@@ -1221,28 +1263,52 @@ public class AiAgentService {
                             latestBuild.getId()
                     );
 
+            System.out.println(
+                    "[BUILD] Build "
+                            + latestBuild.getId()
+                            + " finished with status "
+                            + latestBuild.getStatus()
+            );
 
-            if (latestBuild.getStatus().name()
-                    .equals("SUCCESS")) {
+            if ("SUCCESS".equals(
+                    latestBuild.getStatus().name()
+            )) {
 
                 return latestBuild;
             }
-
 
             if (attempt == MAX_BUILD_ATTEMPTS) {
+
                 return latestBuild;
             }
 
-
             int nextTaskOrder =
-                    tasks.size() + 1;
+                    tasks.stream()
+                            .map(AgentTask::getTaskOrder)
+                            .filter(java.util.Objects::nonNull)
+                            .max(Integer::compareTo)
+                            .orElse(0)
+                            + 1;
+
+            String buildOutput =
+                    latestBuild.getOutput() == null
+                            ? ""
+                            : latestBuild.getOutput();
+
+            String buildErrors =
+                    latestBuild.getErrorOutput() == null
+                            ? ""
+                            : latestBuild.getErrorOutput();
 
             AgentTask fixTask =
                     agentTaskService.createTask(
                             agentRunId,
-                            "Fix build errors - attempt " + attempt,
+
+                            "Fix build errors - attempt "
+                                    + attempt,
+
                             """
-                            Fix the build errors reported by the project build.
+                            Fix the current project build failure.
     
                             Build command:
                             npm run build
@@ -1252,11 +1318,24 @@ public class AiAgentService {
     
                             Build errors:
                             %s
+    
+                            This is a BUILD_FIX task.
+    
+                            You MUST inspect the relevant existing project
+                            configuration/source files and modify the project
+                            so that the reported build errors are resolved.
+    
+                            Do not merely explain the errors.
+    
+                            A successful BUILD_FIX requires an actual
+                            createFile, writeFile or deleteFile operation.
                             """.formatted(
-                                    latestBuild.getOutput(),
-                                    latestBuild.getErrorOutput()
+                                    buildOutput,
+                                    buildErrors
                             ),
+
                             nextTaskOrder,
+
                             AgentTaskType.BUILD_FIX
                     );
 
@@ -1268,12 +1347,10 @@ public class AiAgentService {
 
             try {
 
-
                 List<Message> messages =
                         new ArrayList<>();
 
-                for (MessageResponse message :
-                        history) {
+                for (MessageResponse message : history) {
 
                     switch (message.getRole()) {
 
@@ -1292,69 +1369,177 @@ public class AiAgentService {
                                 );
 
                         case SYSTEM -> {
-                            // Ignore system messages.
+                            // Ignore conversation system messages.
                         }
                     }
                 }
 
-
                 String fixInstruction =
                         """
                         The project build failed.
-                
-                        Diagnose the failure and modify the project
-                        so that the build succeeds.
-                
+    
+                        Perform BUILD_FIX attempt %d.
+    
                         Original user request:
                         %s
-                
-                        Build attempt:
-                        %d
-                
-                        Build output:
+    
+                        ==================================================
+                        BUILD OUTPUT
+                        ==================================================
+    
                         %s
-                
-                        Build error:
+    
+                        ==================================================
+                        BUILD ERRORS
+                        ==================================================
+    
                         %s
-                
-                        IMPORTANT WORKFLOW:
-                
-                        1. Determine which existing files are most likely
-                           responsible for the build error.
-                
-                        2. If project structure is needed, call
-                           listFiles at most once.
-                
-                        3. If multiple files need inspection,
-                           use readFiles once with all relevant paths.
-                
-                        4. Use readFile only when exactly one additional
-                           file genuinely needs inspection.
-                
-                        5. Never repeatedly read the same file.
-                
-                        6. Never use readFile merely to check
-                           whether a file exists.
-                
-                        7. Modify existing files using writeFile.
-                
-                        8. Use createFile only when a genuinely
-                           required file does not exist.
-                
-                        9. Make the minimum changes necessary
-                           to fix the build.
-                
-                        10. Actually fix the project.
-                            Do not merely explain the error.
-                
-                        11. Preserve unrelated functionality.
-                
-                        12. Stop once the build problem has been fixed.
+    
+                        ==================================================
+                        REQUIRED WORKFLOW
+                        ==================================================
+    
+                        1. Read the actual compiler/build errors first.
+    
+                        2. Identify the exact files implicated by those errors.
+    
+                        3. Inspect only the minimum files necessary.
+    
+                        4. If project structure is necessary, call listFiles
+                           at most once.
+    
+                        5. Prefer readFiles when several related files must
+                           be inspected.
+    
+                        6. Inspect package.json whenever the error involves:
+                           - package exports
+                           - dependency versions
+                           - missing packages
+                           - Tailwind
+                           - PostCSS
+                           - Vite plugins
+                           - framework configuration
+    
+                        7. Inspect the exact source file named by the compiler
+                           whenever one is provided.
+    
+                        8. After identifying the root cause, MODIFY the project.
+    
+                        9. Reconcile ALL errors visible in this build output
+                           during the same repair attempt when they share a
+                           common cause.
+    
+                        10. Do not repeatedly inspect files after the cause
+                            is understood.
+    
+                        11. Preserve unrelated functionality and design.
+    
+                        12. Stop after implementing the repair.
+    
+                        ==================================================
+                        KNOWN FAILURE PATTERNS
+                        ==================================================
+    
+                        MISSING_EXPORT / NOT_EXPORTED:
+    
+                        If the build says that a symbol is not exported by
+                        an installed package:
+    
+                        - inspect package.json and the exact importing file;
+                        - treat the compiler message as authoritative;
+                        - do NOT keep importing the same unsupported symbol;
+                        - replace it with a valid export from the installed
+                          package version, use another already-installed
+                          compatible solution, or remove the unsupported
+                          dependency usage if appropriate;
+                        - update every affected import and usage consistently;
+                        - do not guess that an export exists.
+    
+                        Example pattern:
+    
+                        "X is not exported by package Y"
+    
+                        means the current import from Y is invalid for the
+                        installed dependency and must be changed.
+    
+    
+                        TAILWIND / CSS DIRECTIVE / POSTCSS FAILURE:
+    
+                        If the build reports errors such as:
+    
+                        "Unknown at rule: @tailwind"
+    
+                        or reports Tailwind/PostCSS/plugin configuration
+                        problems:
+    
+                        - inspect package.json;
+                        - inspect the stylesheet containing the directives;
+                        - inspect Vite/PostCSS/Tailwind configuration files
+                          if they exist;
+                        - determine the ACTUAL installed Tailwind version and
+                          current project configuration;
+                        - make the stylesheet syntax, package dependencies,
+                          PostCSS/Vite integration and Tailwind version
+                          consistent with one another;
+                        - do NOT blindly preserve @tailwind directives when
+                          the installed setup does not process them;
+                        - do NOT blindly add configuration for a different
+                          Tailwind major version;
+                        - do NOT rewrite the entire UI merely to silence a
+                          CSS processing error.
+    
+    
+                        IMPORT / MODULE RESOLUTION FAILURE:
+    
+                        If a module or local import cannot be resolved:
+    
+                        - inspect the importing file;
+                        - inspect package.json for external dependencies;
+                        - inspect actual project paths for local imports;
+                        - correct the import/path/dependency rather than
+                          creating arbitrary duplicate files.
+    
+    
+                        SYNTAX / JSX FAILURE:
+    
+                        If the compiler gives a file and line number:
+    
+                        - inspect that exact file first;
+                        - repair the smallest coherent code region;
+                        - preserve surrounding behavior.
+    
+    
+                        MULTIPLE BUILD ERRORS:
+    
+                        The build may contain more than one independent error.
+    
+                        Do not fix only the first error when the output already
+                        clearly identifies additional failures.
+    
+                        Fix all clearly identified failures that can be safely
+                        addressed in this repair attempt.
+    
+                        ==================================================
+                        COMPLETION REQUIREMENT
+                        ==================================================
+    
+                        Inspection alone is NOT a BUILD_FIX.
+    
+                        You MUST successfully call at least one of:
+    
+                        - writeFile
+                        - createFile
+                        - deleteFile
+    
+                        before completing this task.
+    
+                        The goal is actual corrected project files, not a
+                        textual explanation.
                         """.formatted(
-                                userRequest,
                                 attempt,
-                                latestBuild.getOutput(),
-                                latestBuild.getErrorOutput()
+                                userRequest,
+                                buildOutput,
+                                buildErrors
                         );
 
                 messages.add(
@@ -1369,91 +1554,131 @@ public class AiAgentService {
                 String fixResponse =
                         aiGenerationRetryService.execute(
                                 "Build fix attempt " + attempt,
+
                                 () ->
-                        chatClient
-                                .prompt()
+                                        chatClient
+                                                .prompt()
 
-                                .system(
-                                        """
-                                        You are the build-fix agent for a professional
-                                        AI application builder.
-                                
-                                        Your responsibility is to diagnose compiler,
-                                        dependency, syntax, import, configuration and
-                                        build errors and modify the project to fix them.
-                                
-                                        AVAILABLE TOOLS
-                                
-                                        listFiles:
-                                        Inspect project structure once.
-                                
-                                        readFiles:
-                                        Preferred tool for reading multiple related files.
-                                
-                                        readFile:
-                                        Read exactly one additional file when necessary.
-                                
-                                        createFile:
-                                        Create a genuinely missing file.
-                                
-                                        writeFile:
-                                        Fix an existing file.
-                                
-                                        deleteFile:
-                                        Delete a file only when necessary.
-                                
-                                        PREFERRED WORKFLOW
-                                
-                                        Build error
-                                            ->
-                                        identify likely files
-                                            ->
-                                        readFiles
-                                            ->
-                                        diagnose
-                                            ->
-                                        writeFile/createFile
-                                            ->
-                                        stop
-                                
-                                        IMPORTANT:
-                                
-                                        Do not repeatedly inspect the same files.
-                                
-                                        Do not use readFile as an existence check.
-                                
-                                        Batch related reads using readFiles.
-                                
-                                        Make the minimum changes necessary to restore
-                                        a successful build.
-                                
-                                        Do not merely explain the error.
-                                
-                                        Your goal is to leave the project in a
-                                        buildable state.
-                                        """
-                                )
+                                                .system(
+                                                        """
+                                                        You are the build-repair agent
+                                                        of a professional AI application
+                                                        builder.
+    
+                                                        Your job is to convert a FAILED
+                                                        generated project into a BUILDABLE
+                                                        project by modifying its files.
+    
+                                                        You repair:
+    
+                                                        - compiler errors
+                                                        - invalid imports
+                                                        - unsupported package exports
+                                                        - dependency mismatches
+                                                        - Tailwind integration
+                                                        - PostCSS configuration
+                                                        - Vite configuration
+                                                        - CSS processing failures
+                                                        - JSX/JavaScript syntax
+                                                        - module resolution
+                                                        - missing configuration files
+    
+                                                        AVAILABLE TOOLS:
+    
+                                                        listFiles
+                                                        readFiles
+                                                        readFile
+                                                        createFile
+                                                        writeFile
+                                                        deleteFile
+    
+                                                        REQUIRED PROCESS:
+    
+                                                        build error
+                                                            ->
+                                                        identify exact failure
+                                                            ->
+                                                        inspect implicated source/config
+                                                            ->
+                                                        determine root cause
+                                                            ->
+                                                        modify project
+                                                            ->
+                                                        stop
+    
+                                                        RULES:
+    
+                                                        1. Compiler/build output is
+                                                           authoritative.
+    
+                                                        2. Never repeatedly apply the same
+                                                           repair if the same error survives
+                                                           into another build attempt.
+    
+                                                        3. When an installed package says an
+                                                           export does not exist, do not keep
+                                                           importing that export.
+    
+                                                        4. For dependency-related failures,
+                                                           inspect package.json before deciding
+                                                           the repair.
+    
+                                                        5. For Tailwind/PostCSS/CSS processing
+                                                           failures, inspect the installed
+                                                           dependency versions and actual
+                                                           configuration before changing CSS.
+    
+                                                        6. Never assume Tailwind syntax from
+                                                           one major version is correct for
+                                                           another major version.
+    
+                                                        7. When multiple errors are already
+                                                           visible, repair all clearly identified
+                                                           causes instead of intentionally
+                                                           leaving known failures behind.
+    
+                                                        8. Prefer modifying existing files with
+                                                           writeFile.
+    
+                                                        9. Use createFile only when a genuinely
+                                                           required file is missing.
+    
+                                                        10. Do not create duplicate components
+                                                            to avoid fixing existing code.
+    
+                                                        11. Preserve the user's intended design
+                                                            and unrelated functionality.
+    
+                                                        12. Do not merely describe the fix.
+    
+                                                        13. BUILD_FIX is complete only after
+                                                            project files have actually changed.
+    
+                                                        14. Stop tool usage once the required
+                                                            repair has been implemented.
+                                                        """
+                                                )
 
-                                .messages(messages)
+                                                .messages(messages)
 
-                                .tools(projectTools)
+                                                .tools(projectTools)
 
-                                .toolContext(
-                                        Map.of(
-                                                "projectId",
-                                                projectId,
+                                                .toolContext(
+                                                        Map.of(
+                                                                "projectId",
+                                                                projectId,
 
-                                                "agentRunId",
-                                                agentRunId,
+                                                                "agentRunId",
+                                                                agentRunId,
 
-                                                "agentTaskId",
-                                                fixTask.getId()
-                                        )
-                                )
+                                                                "agentTaskId",
+                                                                fixTask.getId()
+                                                        )
+                                                )
 
-                                .call()
+                                                .call()
 
-                                .content()
+                                                .content()
                         );
 
                 boolean fixMadeChanges =
@@ -1468,7 +1693,6 @@ public class AiAgentService {
                                         fixTask.getId()
                                 );
 
-
                 System.out.println(
                         "[BUILD-FIX] Task "
                                 + fixTask.getId()
@@ -1478,23 +1702,24 @@ public class AiAgentService {
                                 + fixMadeChanges
                 );
 
-
                 if (!fixMadeChanges) {
 
                     throw new RuntimeException(
-                            "Build-fix agent did not modify any project files. "
-                                    + "The build cannot be considered fixed."
+                            "Build-fix agent did not modify any "
+                                    + "project files. The build cannot "
+                                    + "be considered fixed."
                     );
                 }
-
 
                 if (fixResponse == null ||
                         fixResponse.isBlank()) {
 
-                    fixResponse =
-                            "Build fix completed through project tool changes.";
+                    System.out.println(
+                            "[BUILD-FIX] Gemini returned no text "
+                                    + "response, but project modifications "
+                                    + "were recorded."
+                    );
                 }
-
 
                 agentTaskService.completeTask(
                         fixTask.getId()

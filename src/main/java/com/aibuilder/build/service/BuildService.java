@@ -4,6 +4,7 @@ import com.aibuilder.agent.entity.AgentRun;
 import com.aibuilder.agent.repository.AgentRunRepository;
 import com.aibuilder.build.entity.BuildRun;
 import com.aibuilder.build.entity.BuildStatus;
+import com.aibuilder.build.entity.VisualValidationStatus;
 import com.aibuilder.build.repository.BuildRunRepository;
 import com.aibuilder.project.entity.Project;
 import com.aibuilder.project.repository.ProjectRepository;
@@ -420,5 +421,66 @@ public class BuildService {
                 .findByAgentRunIdOrderByStartedAtDesc(
                         agentRunId
                 );
+    }
+    @Transactional
+    public BuildRun markVisualValidationPassed(
+            Long buildId
+    ) {
+
+        BuildRun buildRun =
+                buildRunRepository
+                        .findById(buildId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Build not found: "
+                                                + buildId
+                                )
+                        );
+
+
+        if (buildRun.getStatus()
+                != BuildStatus.SUCCESS) {
+
+            throw new RuntimeException(
+                    "Only a successful build can pass visual validation."
+            );
+        }
+
+
+        buildRun.setVisualValidationStatus(
+                VisualValidationStatus.PASSED
+        );
+
+
+        return buildRunRepository.save(
+                buildRun
+        );
+    }
+
+
+    @Transactional
+    public BuildRun markVisualValidationFailed(
+            Long buildId
+    ) {
+
+        BuildRun buildRun =
+                buildRunRepository
+                        .findById(buildId)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Build not found: "
+                                                + buildId
+                                )
+                        );
+
+
+        buildRun.setVisualValidationStatus(
+                VisualValidationStatus.FAILED
+        );
+
+
+        return buildRunRepository.save(
+                buildRun
+        );
     }
 }

@@ -4,6 +4,7 @@ import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.options.WaitUntilState;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -109,10 +110,8 @@ public class ScreenshotService {
                         previewUrl,
                         new Page.NavigateOptions()
                                 .setWaitUntil(
-                                        com.microsoft.playwright
-                                                .options
-                                                .WaitUntilState
-                                                .NETWORKIDLE
+                                        WaitUntilState
+                                                .DOMCONTENTLOADED
                                 )
                                 .setTimeout(
                                         30_000
