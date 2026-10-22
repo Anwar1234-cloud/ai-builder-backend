@@ -11,6 +11,8 @@ import com.aibuilder.project.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.aibuilder.project.entity.ProjectType;
+import com.aibuilder.fullstack.runtime.GeneratedAppDatabaseService;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +29,7 @@ public class BuildService {
     private final ProjectWorkspaceService projectWorkspaceService;
     private final BuildExecutorService buildExecutorService;
     private final ProjectIntegrityService projectIntegrityService;
+    private final GeneratedAppDatabaseService generatedAppDatabaseService;
 
     @Transactional
     public BuildRun createBuild(
@@ -140,6 +143,12 @@ public class BuildService {
             );
 
             buildRunRepository.save(buildRun);
+
+            if (buildRun.getProject().getType()
+                    == ProjectType.FULL_STACK_APP) {
+
+                return executeFullStackBuild(buildRun, workspace);
+            }
 
             StringBuilder completeOutput =
                     new StringBuilder();
@@ -304,6 +313,205 @@ public class BuildService {
             );
         }
     }
+
+
+
+    private BuildRun executeFullStackBuild(
+            BuildRun buildRun,
+            Path workspace
+    ) {
+
+        StringBuilder output = new StringBuilder();
+        StringBuilder errors = new StringBuilder();
+
+        try {
+
+            // 1. Validate full-stack structure
+            ProjectIntegrityService.ValidationResult integrity =
+                    projectIntegrityService.validateFullStack(workspace);
+
+            if (!integrity.warnings().isEmpty()) {
+                output.append("===== INTEGRITY WARNINGS =====\n")
+                        .append(integrity.formattedWarnings())
+                        .append("\n\n");
+            }
+
+            if (!integrity.valid()) {
+                output.append("===== INTEGRITY FAILED =====\n")
+                        .append(integrity.formattedErrors())
+                        .append("\n");
+
+                errors.append(integrity.formattedErrors());
+
+                return finishFullStackBuild(
+                        buildRun, false, output, errors
+                );
+            }
+
+            output.append("===== INTEGRITY PASSED =====\n\n");
+
+            Path frontend = workspace.resolve("frontend");
+            Path backend = workspace.resolve("backend");
+
+            // 2. Install frontend dependencies
+            BuildExecutorService.ExecutionResult install =
+                    buildExecutorService.execute(
+                            frontend,
+                            "npm install"
+                    );
+
+            appendExecution(
+                    output,
+                    errors,
+                    "frontend: npm install",
+                    install
+            );
+
+            if (!install.isSuccess()) {
+                return finishFullStackBuild(
+                        buildRun, false, output, errors
+                );
+            }
+
+            // 3. Build React frontend
+            BuildExecutorService.ExecutionResult frontendBuild =
+                    buildExecutorService.execute(
+                            frontend,
+                            "npm run build"
+                    );
+
+            appendExecution(
+                    output,
+                    errors,
+                    "frontend: npm run build",
+                    frontendBuild
+            );
+
+            if (!frontendBuild.isSuccess()) {
+                return finishFullStackBuild(
+                        buildRun, false, output, errors
+                );
+            }
+
+            // 4. Package executable Spring Boot backend
+            BuildExecutorService.ExecutionResult backendBuild =
+                    buildExecutorService.execute(
+                            backend,
+                            "mvn package -DskipTests"
+                    );
+
+            appendExecution(
+                    output,
+                    errors,
+                    "backend: mvn package -DskipTests",
+                    backendBuild
+            );
+
+            if (!backendBuild.isSuccess()) {
+                return finishFullStackBuild(
+                        buildRun, false, output, errors
+                );
+            }
+
+            output.append(
+                    "\n===== FRONTEND AND BACKEND BUILDS PASSED =====\n"
+            );
+
+            // 5. Provision generated application database
+            try {
+
+                String databaseName =
+                        generatedAppDatabaseService.provisionDatabase(
+                                buildRun.getProject().getId()
+                        );
+
+                output.append(
+                                "\n===== DATABASE PROVISIONING =====\n"
+                        )
+                        .append("Database ready: ")
+                        .append(databaseName)
+                        .append("\n");
+
+            } catch (Exception exception) {
+
+                errors.append(
+                        "Database provisioning failed: "
+                                + exception.getMessage()
+                );
+
+                return finishFullStackBuild(
+                        buildRun, false, output, errors
+                );
+            }
+
+            // 6. All build stages completed successfully
+            return finishFullStackBuild(
+                    buildRun, true, output, errors
+            );
+
+        } catch (Exception exception) {
+
+            errors.append(
+                    "Full-stack build failed: "
+                            + exception.getMessage()
+            );
+
+            return finishFullStackBuild(
+                    buildRun, false, output, errors
+            );
+        }
+    }
+
+
+    private void appendExecution(
+            StringBuilder output,
+            StringBuilder errors,
+            String title,
+            BuildExecutorService.ExecutionResult result
+    ) {
+
+        output.append("\n===== ")
+                .append(title)
+                .append(" =====\n")
+                .append(result.output())
+                .append("\n");
+
+        if (result.errorOutput() != null
+                && !result.errorOutput().isBlank()) {
+
+            errors.append("\n===== ")
+                    .append(title)
+                    .append(" =====\n")
+                    .append(result.errorOutput())
+                    .append("\n");
+        }
+
+        if (!result.isSuccess()) {
+            errors.append(title)
+                    .append(" failed with exit code ")
+                    .append(result.exitCode())
+                    .append("\n");
+        }
+    }
+
+    private BuildRun finishFullStackBuild(
+            BuildRun buildRun,
+            boolean success,
+            StringBuilder output,
+            StringBuilder errors
+    ) {
+
+        buildRun.setStatus(
+                success ? BuildStatus.SUCCESS : BuildStatus.FAILED
+        );
+
+        buildRun.setOutput(output.toString());
+        buildRun.setErrorOutput(errors.toString());
+        buildRun.setCompletedAt(LocalDateTime.now());
+
+        return buildRunRepository.save(buildRun);
+    }
+
 
     @Transactional
     public BuildRun materializeBuildWorkspace(

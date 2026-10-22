@@ -90,6 +90,27 @@ public class Deployment {
     )
     private String deploymentUrl;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "backend_provider", length = 30)
+    private DeploymentProvider backendProvider;
+
+    @Column(name = "backend_service_id", length = 255)
+    private String backendServiceId;
+
+    @Column(name = "backend_deployment_id", length = 255)
+    private String backendDeploymentId;
+
+    @Column(name = "backend_url", length = 1000)
+    private String backendUrl;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "backend_status", length = 30)
+    private DeploymentStatus backendStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "frontend_status", length = 30)
+    private DeploymentStatus frontendStatus;
+
 
     @Column(
             name = "error_message",

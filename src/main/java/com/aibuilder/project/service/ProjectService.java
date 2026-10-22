@@ -26,9 +26,11 @@ public class ProjectService {
     private final UserRepository userRepository;
     private final ProjectBootstrapService projectBootstrapService;
 
+
     public ProjectResponse createProject(CreateProjectRequest request) {
 
         User user = getAuthenticatedUser();
+
 
         Project project = Project.builder()
                 .name(request.getName())
@@ -37,19 +39,32 @@ public class ProjectService {
                 .user(user)
                 .build();
 
+
         Project savedProject = projectRepository.save(project);
 
-        if (savedProject.getType() == ProjectType.WEBSITE
-                || savedProject.getType() == ProjectType.WEB_APP
-                || savedProject.getType() == ProjectType.FULL_STACK_APP) {
+
+        if (savedProject.getType() == ProjectType.FULL_STACK_APP) {
+
+
+            projectBootstrapService.bootstrapFullStackProject(
+                    savedProject.getId()
+            );
+
+        } else if (
+                savedProject.getType() == ProjectType.WEBSITE ||
+                        savedProject.getType() == ProjectType.WEB_APP
+        ) {
+
 
             projectBootstrapService.bootstrapReactProject(
                     savedProject.getId()
             );
         }
 
+
         return toResponse(savedProject);
     }
+
 
     @Transactional(readOnly = true)
     public ProjectResponse getProject(Long id) {

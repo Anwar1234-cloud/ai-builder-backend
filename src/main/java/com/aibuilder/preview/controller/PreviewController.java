@@ -11,6 +11,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.bind.annotation.*;
+import com.aibuilder.project.entity.ProjectType;
+import com.aibuilder.project.repository.ProjectRepository;
 
 import java.io.IOException;
 import java.net.URLConnection;
@@ -24,6 +26,7 @@ public class PreviewController {
     private final PreviewService previewService;
     private final ScreenshotService screenshotService;
     private final VisualReviewService visualReviewService;
+    private final ProjectRepository projectRepository;
 
     @GetMapping("/{buildId}")
     public ResponseEntity<String> previewIndex(
@@ -44,18 +47,7 @@ public class PreviewController {
                         StandardCharsets.UTF_8
                 );
 
-        /*
-         * Vite normally generates:
-         *
-         * /assets/index-xxxxx.js
-         *
-         * But our preview lives under:
-         *
-         * /api/projects/{projectId}/previews/{buildId}/
-         *
-         * Rewrite the asset URLs so the browser requests
-         * them from our preview endpoint.
-         */
+
         String previewBase =
                 "/api/projects/"
                         + projectId
@@ -82,6 +74,24 @@ public class PreviewController {
                 "href='/assets/",
                 "href='" + previewBase + "assets/"
         );
+
+        var project = projectRepository.findById(projectId)
+                .orElseThrow(() ->
+                        new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.NOT_FOUND,
+                                "Project not found"
+                        )
+                );
+
+        if (project.getType() == ProjectType.FULL_STACK_APP) {
+            String bridge = fullStackApiBridge(projectId);
+
+            if (html.contains("</head>")) {
+                html = html.replace("</head>", bridge + "\n</head>");
+            } else {
+                html = bridge + html;
+            }
+        }
 
         return ResponseEntity.ok()
                 .contentType(
@@ -176,5 +186,65 @@ public class PreviewController {
                 );
 
         return ResponseEntity.ok(result);
+    }
+
+    private String fullStackApiBridge(Long projectId) {
+        String apiPrefix =
+                "/api/projects/" + projectId + "/runtime/api";
+
+        return """
+        <script>
+        (() => {
+          const API_PREFIX = '%s';
+          const nativeFetch = window.fetch.bind(window);
+
+          function rewriteUrl(input) {
+            const url = new URL(input, window.location.href);
+
+            if (
+              url.origin === window.location.origin &&
+              (url.pathname === '/api' ||
+               url.pathname.startsWith('/api/')) &&
+              !url.pathname.startsWith('/api/projects/')
+            ) {
+              return API_PREFIX +
+                url.pathname.substring(4) +
+                url.search +
+                url.hash;
+            }
+
+            return input;
+          }
+
+          window.fetch = (input, init) => {
+            if (input instanceof Request) {
+              const rewritten = rewriteUrl(input.url);
+              if (rewritten !== input.url) {
+                return nativeFetch(
+                  new Request(rewritten, input),
+                  init
+                );
+              }
+              return nativeFetch(input, init);
+            }
+
+            return nativeFetch(rewriteUrl(input), init);
+          };
+
+          const nativeOpen = XMLHttpRequest.prototype.open;
+
+          XMLHttpRequest.prototype.open = function(
+            method, url, ...args
+          ) {
+            return nativeOpen.call(
+              this,
+              method,
+              rewriteUrl(url),
+              ...args
+            );
+          };
+        })();
+        </script>
+        """.formatted(apiPrefix);
     }
 }

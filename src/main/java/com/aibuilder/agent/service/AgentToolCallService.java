@@ -248,4 +248,104 @@ public class AgentToolCallService {
                 })
                 .toList();
     }
+
+    @Transactional(readOnly = true)
+    public boolean hasSuccessfulModificationInStage(
+            Long agentTaskId,
+            String failedBuildStage
+    ) {
+
+        if (failedBuildStage == null
+                || failedBuildStage.isBlank()
+                || failedBuildStage.equalsIgnoreCase("UNKNOWN")) {
+
+            return hasSuccessfulModification(agentTaskId);
+        }
+
+        String requiredPrefix;
+
+        if (failedBuildStage.equalsIgnoreCase("BACKEND")) {
+            requiredPrefix = "backend/";
+        } else if (failedBuildStage.equalsIgnoreCase("FRONTEND")) {
+            requiredPrefix = "frontend/";
+        } else {
+            return hasSuccessfulModification(agentTaskId);
+        }
+
+        return getSuccessfulModifications(agentTaskId)
+                .stream()
+                .anyMatch(toolCall -> {
+
+                    String targetPath = toolCall.getTargetPath();
+
+                    if (targetPath == null || targetPath.isBlank()) {
+                        return false;
+                    }
+
+                    String normalizedPath = targetPath
+                            .replace("\\", "/")
+                            .replaceFirst("^\\./", "")
+                            .toLowerCase(java.util.Locale.ROOT);
+
+                    return normalizedPath.startsWith(requiredPrefix);
+                });
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasSuccessfulModificationInStageSince(
+            Long agentTaskId,
+            String failedBuildStage,
+            int previousToolCallCount
+    ) {
+        List<AgentToolCall> toolCalls =
+                getToolCallsForTask(agentTaskId);
+
+        if (previousToolCallCount < 0
+                || previousToolCallCount > toolCalls.size()) {
+            throw new IllegalArgumentException(
+                    "Invalid tool-call boundary: " + previousToolCallCount
+            );
+        }
+
+        String requiredPrefix = null;
+
+        if ("BACKEND".equalsIgnoreCase(failedBuildStage)) {
+            requiredPrefix = "backend/";
+        } else if ("FRONTEND".equalsIgnoreCase(failedBuildStage)) {
+            requiredPrefix = "frontend/";
+        }
+
+        final String stagePrefix = requiredPrefix;
+
+        return toolCalls.stream()
+                .skip(previousToolCallCount)
+                .filter(call ->
+                        call.getStatus() == AgentToolCallStatus.COMPLETED
+                )
+                .filter(call -> {
+                    String name = call.getToolName();
+
+                    return "writeFile".equals(name)
+                            || "createFile".equals(name)
+                            || "deleteFile".equals(name);
+                })
+                .anyMatch(call -> {
+                    if (stagePrefix == null) {
+                        return true;
+                    }
+
+                    String path = call.getTargetPath();
+
+                    if (path == null) {
+                        return false;
+                    }
+
+                    String normalizedPath = path
+                            .replace('\\', '/')
+                            .replaceFirst("^\\./", "")
+                            .toLowerCase(java.util.Locale.ROOT);
+
+                    return normalizedPath.startsWith(stagePrefix);
+                });
+    }
 }

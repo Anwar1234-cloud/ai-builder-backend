@@ -17,12 +17,36 @@ public class VercelPrebuiltPackager {
 
     private final ObjectMapper objectMapper;
 
+
     public Path packageBuild(Path distDirectory) {
 
-        validateDist(distDirectory);
+        if (distDirectory == null) {
+            throw new DeploymentException(
+                    "Build dist directory path cannot be null."
+            );
+        }
 
-        Path workspace =
-                distDirectory.getParent();
+        Path resolvedDist = distDirectory;
+
+        // Support full-stack projects: workspace/frontend/dist
+        if (!Files.isDirectory(resolvedDist)) {
+            Path workspace = distDirectory.getParent();
+
+            if (workspace != null) {
+                Path frontendDist = workspace
+                        .resolve("frontend")
+                        .resolve("dist");
+
+                if (Files.isDirectory(frontendDist)) {
+                    resolvedDist = frontendDist;
+                }
+            }
+        }
+
+        validateDist(resolvedDist);
+
+        // Keep the original build workspace as the Vercel output root.
+        Path workspace = distDirectory.getParent();
 
         Path vercelDirectory =
                 workspace.resolve(".vercel");
@@ -34,66 +58,29 @@ public class VercelPrebuiltPackager {
                 outputDirectory.resolve("static");
 
         try {
-
-            /*
-             * Remove previous generated Vercel output so stale
-             * files cannot leak into a new deployment.
-             */
             deleteDirectory(vercelDirectory);
 
             Files.createDirectories(staticDirectory);
 
-            /*
-             * Copy everything from dist/ into
-             * .vercel/output/static/.
-             */
             copyDirectory(
-                    distDirectory,
+                    resolvedDist,
                     staticDirectory
             );
 
-            /*
-             * Build Output API configuration.
-             *
-             * version: 3 is required by Vercel.
-             *
-             * The routes below provide SPA fallback:
-             * existing static assets are checked first,
-             * then unknown routes fall back to index.html.
-             */
-            var root =
-                    objectMapper.createObjectNode();
-
+            var root = objectMapper.createObjectNode();
             root.put("version", 3);
 
-            var routes =
-                    root.putArray("routes");
+            var routes = root.putArray("routes");
 
-            var filesystem =
-                    routes.addObject();
+            routes.addObject()
+                    .put("handle", "filesystem");
 
-            filesystem.put(
-                    "handle",
-                    "filesystem"
-            );
-
-            var fallback =
-                    routes.addObject();
-
-            fallback.put(
-                    "src",
-                    "/(.*)"
-            );
-
-            fallback.put(
-                    "dest",
-                    "/index.html"
-            );
+            routes.addObject()
+                    .put("src", "/(.*)")
+                    .put("dest", "/index.html");
 
             Path configFile =
-                    outputDirectory.resolve(
-                            "config.json"
-                    );
+                    outputDirectory.resolve("config.json");
 
             objectMapper.writerWithDefaultPrettyPrinter()
                     .writeValue(
@@ -104,18 +91,16 @@ public class VercelPrebuiltPackager {
             return workspace;
 
         } catch (Exception e) {
-
             throw new DeploymentException(
                     "Failed to prepare Vercel prebuilt output: "
-                            + (
-                            e.getMessage() != null
-                                    ? e.getMessage()
-                                    : e.getClass().getName()
-                    ),
+                            + (e.getMessage() != null
+                            ? e.getMessage()
+                            : e.getClass().getName()),
                     e
             );
         }
     }
+
 
 
     private void validateDist(

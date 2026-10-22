@@ -6,6 +6,11 @@ import com.aibuilder.build.service.ProjectBootstrapService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.aibuilder.fullstack.validation.FullStackBuildValidationService;
+import com.aibuilder.fullstack.validation.FullStackFunctionalValidationService;
+import com.aibuilder.project.service.ProjectService;
+import com.aibuilder.project.entity.ProjectType;
+import org.springframework.security.core.Authentication;
 
 import java.util.List;
 
@@ -16,6 +21,8 @@ public class BuildController {
 
     private final BuildService buildService;
     private final ProjectBootstrapService projectBootstrapService;
+    private final FullStackBuildValidationService fullStackBuildValidationService;
+    private final ProjectService projectService;
 
     @PostMapping
     public ResponseEntity<BuildRun> createBuild(
@@ -72,6 +79,10 @@ public class BuildController {
         );
     }
 
+
+
+
+
     @GetMapping("/{buildId}")
     public ResponseEntity<BuildRun> getBuild(
             @PathVariable Long projectId,
@@ -120,4 +131,46 @@ public class BuildController {
         projectBootstrapService.bootstrapReactProject(projectId);
         return ResponseEntity.ok().build();
     }
+
+
+    @PostMapping("/{buildId}/validate-functional")
+    public ResponseEntity<FullStackFunctionalValidationService.ValidationReport>
+    validateFunctionalBuild(
+            @PathVariable Long projectId,
+            @PathVariable Long buildId
+    ) throws Exception {
+
+        // Verify that the authenticated user owns this project.
+        var project = projectService.getProject(projectId);
+
+        // Only FULL_STACK_APP projects support functional validation.
+        if (project.getType() != ProjectType.FULL_STACK_APP) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // Fetch the existing build without creating a new build.
+        BuildRun build = buildService.getBuild(buildId);
+
+        // Verify that the build belongs to this project.
+        if (build.getProject() == null
+                || !projectId.equals(build.getProject().getId())) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // The existing build must be associated with an agent run.
+        if (build.getAgentRun() == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Long agentRunId = build.getAgentRun().getId();
+
+        var report = fullStackBuildValidationService.validate(
+                projectId,
+                agentRunId,
+                buildId
+        );
+
+        return ResponseEntity.ok(report);
+    }
+
 }

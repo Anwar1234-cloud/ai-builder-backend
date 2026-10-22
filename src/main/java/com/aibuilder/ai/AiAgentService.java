@@ -11,6 +11,7 @@ import com.aibuilder.build.entity.BuildRun;
 import com.aibuilder.build.service.BuildService;
 import com.aibuilder.conversation.dto.MessageResponse;
 import com.aibuilder.conversation.service.ConversationService;
+import com.aibuilder.project.service.ProjectService;
 import com.aibuilder.version.service.ProjectVersionService;
 import com.aibuilder.preview.service.ScreenshotService;
 import com.aibuilder.visual.VisualReviewResult;
@@ -23,6 +24,16 @@ import org.springframework.ai.chat.messages.UserMessage;
 import com.aibuilder.workspace.service.WorkspaceFileCacheService;
 import com.aibuilder.agent.service.AgentToolCallService;
 import org.springframework.stereotype.Service;
+import com.aibuilder.project.entity.ProjectType;
+import com.aibuilder.project.repository.ProjectRepository;
+import com.aibuilder.fullstack.planner.FullStackPlannerService;
+import com.aibuilder.fullstack.dto.FullStackPlan;
+import com.aibuilder.fullstack.service.FullStackArchitectureService;
+import com.aibuilder.fullstack.validation.FullStackBuildValidationService;
+import com.aibuilder.fullstack.validation.FullStackFunctionalValidationService;
+
+import com.aibuilder.fullstack.planner.FullStackTaskPlannerService;
+
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,13 +54,24 @@ public class AiAgentService {
     private final AiPlannerService aiPlannerService;
     private final AiGenerationRetryService aiGenerationRetryService;
     private final BuildService buildService;
+    private final ProjectService projectService;
 
     private final ScreenshotService screenshotService;
     private final VisualReviewService visualReviewService;
 
+    private final ProjectRepository projectRepository;
+    private final FullStackPlannerService fullStackPlannerService;
+
+
+    private final FullStackTaskPlannerService fullStackTaskPlannerService;
+    private final FullStackArchitectureService fullStackArchitectureService;
+    private final FullStackBuildValidationService fullStackBuildValidationService;
+
     private static final int MAX_BUILD_ATTEMPTS = 3;
     private static final int MAX_TASK_EXECUTION_ATTEMPTS = 2;
     private static final int MAX_VISUAL_FIX_ATTEMPTS = 2;
+
+    private static final int MAX_FUNCTIONAL_FIX_ATTEMPTS = 3;
 
     public AgentResult run(
             Long projectId,
@@ -93,11 +115,57 @@ public class AiAgentService {
                             );
 
 
-            AgentPlan plan =
-                    aiPlannerService.createPlan(
-                            projectId,
-                            userRequest
-                    );
+            ProjectType projectType = projectRepository.findById(projectId)
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(
+                                    "Project not found: " + projectId
+                            )
+                    )
+                    .getType();
+
+            AgentPlan plan;
+
+
+            if (projectType == ProjectType.FULL_STACK_APP) {
+
+                System.out.println(
+                        "[FULLSTACK] Generating architecture for project "
+                                + projectId
+                );
+
+                FullStackPlan architecture =
+                        fullStackPlannerService.createPlan(userRequest);
+
+                // Persist architecture for runtime functional validation
+                fullStackArchitectureService.savePlan(
+                        agentRun.getId(),
+                        architecture
+                );
+
+                System.out.println(
+                        "[FULLSTACK] Architecture saved for agent run "
+                                + agentRun.getId()
+                );
+
+                plan = fullStackTaskPlannerService.createTaskPlan(
+                        architecture
+                );
+
+                System.out.println(
+                        "[FULLSTACK] Generated "
+                                + plan.tasks().size()
+                                + " execution tasks"
+                );
+
+            } else {
+
+                // Preserve existing WEBSITE generation flow
+                plan = aiPlannerService.createPlan(
+                        projectId,
+                        userRequest
+                );
+            }
+
 
             if (plan.tasks() == null ||
                     plan.tasks().isEmpty()) {
@@ -199,6 +267,19 @@ public class AiAgentService {
             }
 
 
+            if (projectType == ProjectType.FULL_STACK_APP) {
+                buildRun = validateFunctionalityWithAutoFix(
+                        projectId,
+                        agentRun.getId(),
+                        userRequest,
+                        history,
+                        tasks,
+                        buildRun
+                );
+            }
+
+
+
             agentRunService.completeRun(
                     agentRun.getId()
             );
@@ -233,6 +314,242 @@ public class AiAgentService {
 
             throw e;
         }
+    }
+
+    private BuildRun validateFunctionalityWithAutoFix(
+            Long projectId,
+            Long agentRunId,
+            String userRequest,
+            List<MessageResponse> history,
+            List<AgentTask> tasks,
+            BuildRun initialBuild
+    ) {
+        BuildRun currentBuild = initialBuild;
+
+        for (int attempt = 0;
+             attempt <= MAX_FUNCTIONAL_FIX_ATTEMPTS;
+             attempt++) {
+
+            FullStackFunctionalValidationService.ValidationReport report;
+
+            try {
+                report = fullStackBuildValidationService.validate(
+                        projectId,
+                        agentRunId,
+                        currentBuild.getId()
+                );
+            } catch (Exception e) {
+                // Infrastructure errors must not trigger arbitrary AI code repairs.
+                throw new IllegalStateException(
+                        "Functional validation infrastructure failed: "
+                                + e.getClass().getSimpleName(),
+                        e
+                );
+            }
+
+            if (report.passed()) {
+                System.out.println(
+                        "[FUNCTIONAL] All tests PASSED on build "
+                                + currentBuild.getId()
+                );
+                return currentBuild;
+            }
+
+            StringBuilder failures = new StringBuilder();
+            StringBuilder testSummary = new StringBuilder();
+
+            for (var result : report.results()) {
+
+                testSummary.append("- ")
+                        .append(result.name())
+                        .append(": ")
+                        .append(result.passed() ? "PASSED" : "FAILED")
+                        .append(" — ")
+                        .append(result.message())
+                        .append("\n");
+
+                if (!result.passed()) {
+                    failures.append("- ")
+                            .append(result.name())
+                            .append(": ")
+                            .append(result.message())
+                            .append("\n");
+                }
+            }
+
+            System.out.println(
+                    "[FUNCTIONAL] Validation results for build "
+                            + currentBuild.getId()
+                            + ":\n"
+                            + testSummary
+            );
+
+            if (attempt == MAX_FUNCTIONAL_FIX_ATTEMPTS) {
+                throw new IllegalStateException(
+                        "Functional validation failed after "
+                                + MAX_FUNCTIONAL_FIX_ATTEMPTS
+                                + " repair attempts:\n"
+                                + failures
+                );
+            }
+
+            int repairNumber = attempt + 1;
+
+            int nextTaskOrder = tasks.stream()
+                    .map(AgentTask::getTaskOrder)
+                    .filter(java.util.Objects::nonNull)
+                    .max(Integer::compareTo)
+                    .orElse(0) + 1;
+
+            AgentTask fixTask = agentTaskService.createTask(
+                    agentRunId,
+                    "Fix functional test failures - attempt " + repairNumber,
+                    """
+                    Repair the generated FULL_STACK_APP based on actual
+                    functional validation failures.
+            
+                    Original user request:
+                    %s
+            
+                    Failed functional tests:
+                    %s
+            
+                    Full functional test execution summary:
+                    %s
+            
+                    Repair attempt: %d of %d
+            
+                    MANDATORY DIAGNOSTIC WORKFLOW:
+            
+                    1. Inspect relevant generated frontend/ and backend/ files.
+            
+                    2. Identify failed HTTP endpoints, request methods,
+                       expected statuses, actual statuses and dependencies.
+            
+                    3. Inspect related controllers, DTOs, services,
+                       repositories, security configuration and filters.
+            
+                    4. For HTTP 401 or 403:
+                       - Check JWT extraction and validation.
+                       - Check authentication and authorization rules.
+                       - Check user identity and role propagation.
+                       - Check whether earlier authenticated tests passed.
+                       - Do not assume the token is missing.
+            
+                    5. For HTTP 400 or 422:
+                       - Compare request DTO validation with the
+                         functional test request body.
+                       - Check required fields and entity relationships.
+            
+                    6. For HTTP 404:
+                       - Verify controller mappings and API paths.
+            
+                    7. For HTTP 500:
+                       - Inspect exception handling, persistence,
+                         database constraints and service logic.
+            
+                    8. Modify the actual generated project files
+                       using the available file modification tools
+                       when the implementation is defective.
+            
+                    9. Preserve existing working functionality and
+                       authentication requirements.
+            
+                    10. Never disable authentication, remove tests,
+                        hardcode test responses, or modify the
+                        AI Builder application's own security.
+            
+                    11. If the failure is caused by an incorrect
+                        functional test specification rather than
+                        generated implementation, report that
+                        distinction instead of weakening correct code.
+            
+                    12. Avoid unrelated changes. Focus on the
+                        smallest correct repair.
+            
+                    IMPORTANT:
+                    A successful explanation is not a successful repair.
+                    Actual code modifications are required when the
+                    generated implementation is defective.
+                    """.formatted(
+                            userRequest,
+                            failures,
+                            testSummary,
+                            repairNumber,
+                            MAX_FUNCTIONAL_FIX_ATTEMPTS
+                    ),
+                    nextTaskOrder,
+                    AgentTaskType.BUILD_FIX
+            );
+
+            tasks.add(fixTask);
+            agentTaskService.startTask(fixTask.getId());
+
+            try {
+                int previousToolCallCount =
+                        agentToolCallService
+                                .getToolCallsForTask(fixTask.getId())
+                                .size();
+
+                executeTaskWithRetry(
+                        projectId,
+                        agentRunId,
+                        fixTask,
+                        userRequest,
+                        history
+                );
+
+                boolean modifiedBackend =
+                        agentToolCallService.hasSuccessfulModificationInStageSince(
+                                fixTask.getId(),
+                                "BACKEND",
+                                previousToolCallCount
+                        );
+
+                boolean modifiedFrontend =
+                        agentToolCallService.hasSuccessfulModificationInStageSince(
+                                fixTask.getId(),
+                                "FRONTEND",
+                                previousToolCallCount
+                        );
+
+                if (!modifiedBackend && !modifiedFrontend) {
+                    throw new IllegalStateException(
+                            "Functional repair did not modify any generated " +
+                                    "backend or frontend files"
+                    );
+                }
+
+                agentTaskService.completeTask(fixTask.getId());
+
+            } catch (Exception e) {
+                agentTaskService.failTask(
+                        fixTask.getId(),
+                        e.getMessage()
+                );
+                throw e;
+            }
+
+
+
+            currentBuild = buildWithAutoFix(
+                    projectId,
+                    agentRunId,
+                    userRequest,
+                    history,
+                    tasks
+            );
+
+            if (!"SUCCESS".equals(currentBuild.getStatus().name())) {
+                throw new IllegalStateException(
+                        "Functional repair rebuild failed"
+                );
+            }
+        }
+
+        throw new IllegalStateException(
+                "Unexpected functional validation state"
+        );
     }
 
     private BuildRun validateVisualsWithAutoFix(
@@ -1240,6 +1557,34 @@ public class AiAgentService {
 
         BuildRun latestBuild = null;
 
+        boolean fullStack =
+                projectService.getProject(projectId).getType()
+                        == ProjectType.FULL_STACK_APP;
+
+        String buildDescription = fullStack
+                ? """
+          FULL_STACK_APP build:
+          - frontend/: npm install
+          - frontend/: npm run build
+          - backend/: mvn compile
+
+          All project file paths are relative to the
+          project root.
+
+          Frontend files are under frontend/.
+          Backend files are under backend/.
+
+          Fix errors in the relevant subproject.
+          Do not move frontend or backend files
+          into the project root.
+          """
+                : """
+          WEBSITE build:
+          - npm run build
+
+          Files are located at the project root.
+          """;
+
         for (int attempt = 1;
              attempt <= MAX_BUILD_ATTEMPTS;
              attempt++) {
@@ -1299,6 +1644,25 @@ public class AiAgentService {
                     latestBuild.getErrorOutput() == null
                             ? ""
                             : latestBuild.getErrorOutput();
+
+            String failedBuildStage = "UNKNOWN";
+
+            if (fullStack) {
+                String normalizedErrors = buildErrors.toLowerCase();
+                String normalizedOutput = buildOutput.toLowerCase();
+
+                if (normalizedErrors.contains("backend:")
+                        || normalizedOutput.contains("compilation error")) {
+
+                    failedBuildStage = "BACKEND";
+
+                } else if (normalizedErrors.contains("frontend:")
+                        || normalizedOutput.contains("vite build")
+                        || normalizedOutput.contains("rollup error")) {
+
+                    failedBuildStage = "FRONTEND";
+                }
+            }
 
             AgentTask fixTask =
                     agentTaskService.createTask(
@@ -1374,14 +1738,39 @@ public class AiAgentService {
                     }
                 }
 
+                String stageInstruction = fullStack
+                        ? """
+          ==================================================
+          FAILED BUILD STAGE: %s
+          ==================================================
+
+          If BACKEND:
+          - Focus on backend Java/Maven compilation errors.
+          - Read the exact backend source file named in the error.
+          - Do not modify frontend files for backend-only errors.
+
+          If FRONTEND:
+          - Focus on frontend npm/Vite compilation errors.
+          - Read the exact frontend file named in the error.
+          - Do not modify backend files for frontend-only errors.
+
+          Always prioritize the actual failing build stage.
+          """.formatted(failedBuildStage)
+                        : "";
+
                 String fixInstruction =
                         """
-                        The project build failed.
+                         The project build failed.
     
-                        Perform BUILD_FIX attempt %d.
+                         Perform BUILD_FIX attempt %d.
+                        
+                         %s
+                        
+                         PROJECT BUILD STRUCTURE:
+                          %s
     
-                        Original user request:
-                        %s
+                         Original user request:
+                         %s
     
                         ==================================================
                         BUILD OUTPUT
@@ -1537,6 +1926,8 @@ public class AiAgentService {
                         textual explanation.
                         """.formatted(
                                 attempt,
+                                stageInstruction,
+                                buildDescription,
                                 userRequest,
                                 buildOutput,
                                 buildErrors
@@ -1551,9 +1942,50 @@ public class AiAgentService {
                 ChatClient chatClient =
                         chatClientBuilder.build();
 
+                final int maxStageRepairAttempts = fullStack ? 2 : 1;
+
+                boolean repairAccepted = false;
+                String previousStageRejection = null;
+
+                for (int stageRepairAttempt = 1;
+                     stageRepairAttempt <= maxStageRepairAttempts;
+                     stageRepairAttempt++) {
+
+                    int previousToolCallCount =
+                            agentToolCallService
+                                    .getToolCallsForTask(fixTask.getId())
+                                    .size();
+
+                    List<Message> attemptMessages =
+                            new ArrayList<>(messages);
+
+                    if (previousStageRejection != null) {
+                        attemptMessages.add(
+                                new UserMessage(
+                                        """
+                                        PREVIOUS BUILD_FIX ATTEMPT REJECTED.
+                
+                                        Reason:
+                                        %s
+                
+                                        The build is still failing.
+                
+                                        Inspect the exact source file named in
+                                        the compiler error.
+                
+                                        Modify the failing build stage.
+                                        Do not modify unrelated files.
+                                        """.formatted(previousStageRejection)
+                                )
+                        );
+                    }
+
+
+
                 String fixResponse =
                         aiGenerationRetryService.execute(
-                                "Build fix attempt " + attempt,
+                                "Build fix attempt " + attempt
+                                + ", stage retry " + stageRepairAttempt,
 
                                 () ->
                                         chatClient
@@ -1659,7 +2091,7 @@ public class AiAgentService {
                                                         """
                                                 )
 
-                                                .messages(messages)
+                                                .messages(attemptMessages)
 
                                                 .tools(projectTools)
 
@@ -1681,49 +2113,82 @@ public class AiAgentService {
                                                 .content()
                         );
 
-                boolean fixMadeChanges =
-                        agentToolCallService
-                                .hasSuccessfulModification(
-                                        fixTask.getId()
-                                );
+                    boolean fixMadeChanges =
+                            fullStack
+                                    ? agentToolCallService
+                                    .hasSuccessfulModificationInStageSince(
+                                            fixTask.getId(),
+                                            failedBuildStage,
+                                            previousToolCallCount
+                                    )
+                                    : agentToolCallService
+                                    .hasSuccessfulModification(
+                                            fixTask.getId()
+                                    );
 
-                boolean fixUsedTools =
-                        agentToolCallService
-                                .hasAnySuccessfulToolCall(
-                                        fixTask.getId()
-                                );
-
-                System.out.println(
-                        "[BUILD-FIX] Task "
-                                + fixTask.getId()
-                                + " | usedTool="
-                                + fixUsedTools
-                                + " | modifiedProject="
-                                + fixMadeChanges
-                );
-
-                if (!fixMadeChanges) {
-
-                    throw new RuntimeException(
-                            "Build-fix agent did not modify any "
-                                    + "project files. The build cannot "
-                                    + "be considered fixed."
-                    );
-                }
-
-                if (fixResponse == null ||
-                        fixResponse.isBlank()) {
+                    boolean fixUsedTools =
+                            agentToolCallService
+                                    .hasAnySuccessfulToolCall(
+                                            fixTask.getId()
+                                    );
 
                     System.out.println(
-                            "[BUILD-FIX] Gemini returned no text "
-                                    + "response, but project modifications "
-                                    + "were recorded."
+                            "[BUILD-FIX] Task "
+                                    + fixTask.getId()
+                                    + " | stage="
+                                    + failedBuildStage
+                                    + " | stageRepairAttempt="
+                                    + stageRepairAttempt
+                                    + "/"
+                                    + maxStageRepairAttempts
+                                    + " | usedTool="
+                                    + fixUsedTools
+                                    + " | modifiedCorrectStage="
+                                    + fixMadeChanges
+                    );
+
+                    if (!fixMadeChanges) {
+
+                        previousStageRejection = fullStack
+                                ? "Expected modification in "
+                                + failedBuildStage
+                                + " stage, but no successful modification "
+                                + "was recorded in that stage during "
+                                + "repair attempt "
+                                + stageRepairAttempt
+                                : "No successful project modification was recorded.";
+
+                        System.err.println(
+                                "[BUILD-FIX] " + previousStageRejection
+                        );
+
+                        if (stageRepairAttempt < maxStageRepairAttempts) {
+                            continue;
+                        }
+
+                        throw new RuntimeException(previousStageRejection);
+                    }
+
+                    if (fixResponse == null || fixResponse.isBlank()) {
+                        System.out.println(
+                                "[BUILD-FIX] AI returned no text response, "
+                                        + "but project modifications were recorded."
+                        );
+                    }
+
+                    repairAccepted = true;
+                    break;
+                }
+
+                if (!repairAccepted) {
+                    throw new RuntimeException(
+                            "BUILD_FIX failed after "
+                                    + maxStageRepairAttempts
+                                    + " repair attempts."
                     );
                 }
 
-                agentTaskService.completeTask(
-                        fixTask.getId()
-                );
+                agentTaskService.completeTask(fixTask.getId());
 
             } catch (Exception e) {
 
@@ -1792,4 +2257,6 @@ public class AiAgentService {
             String response
     ) {
     }
+
+
 }

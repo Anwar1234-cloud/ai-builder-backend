@@ -16,6 +16,9 @@ import com.aibuilder.project.repository.ProjectRepository;
 import com.aibuilder.deployment.vercel.VercelDeploymentClient;
 import com.aibuilder.deployment.vercel.VercelDeploymentResult;
 import com.aibuilder.deployment.vercel.VercelDeploymentStatus;
+import com.aibuilder.deployment.railway.RailwayCliDeploymentService;
+import com.aibuilder.deployment.railway.RailwayDeploymentClient;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Path;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +36,8 @@ public class DeploymentService {
     private final ProjectRepository projectRepository;
     private final BuildRunRepository buildRunRepository;
     private final VercelDeploymentClient vercelDeploymentClient;
+    private final RailwayCliDeploymentService railwayCliDeploymentService;
+    private final RailwayDeploymentClient railwayDeploymentClient;
 
     @Transactional
     public DeploymentResponse createDeployment(
@@ -246,6 +251,293 @@ public class DeploymentService {
             );
         }
     }
+
+
+    private Path resolveBackendDirectory(BuildRun buildRun) {
+
+        if (buildRun == null
+                || buildRun.getWorkspacePath() == null
+                || buildRun.getWorkspacePath().isBlank()) {
+
+            throw new DeploymentException(
+                    "Build workspace path is missing."
+            );
+        }
+
+        Path workspace = Path.of(
+                buildRun.getWorkspacePath()
+        ).toAbsolutePath().normalize();
+
+        Path backendDirectory = workspace.resolve(
+                "backend"
+        ).normalize();
+
+        if (!java.nio.file.Files.isDirectory(backendDirectory)) {
+
+            throw new DeploymentException(
+                    "Generated backend directory not found for build "
+                            + buildRun.getId()
+            );
+        }
+
+        if (!java.nio.file.Files.isRegularFile(
+                backendDirectory.resolve("pom.xml")
+        )) {
+
+            throw new DeploymentException(
+                    "Generated backend pom.xml not found for build "
+                            + buildRun.getId()
+            );
+        }
+
+        return backendDirectory;
+    }
+
+
+    public String uploadBackendToRailway(
+            Long buildRunId,
+            String railwayProjectId,
+            String railwayServiceId,
+            String railwayEnvironmentId
+    ) {
+
+        if (buildRunId == null) {
+            throw new DeploymentException(
+                    "Build ID is required."
+            );
+        }
+
+        BuildRun buildRun = buildRunRepository
+                .findById(buildRunId)
+                .orElseThrow(() -> new DeploymentException(
+                        "Build not found: " + buildRunId
+                ));
+
+        if (buildRun.getStatus() != BuildStatus.SUCCESS) {
+            throw new DeploymentException(
+                    "Backend upload requires a successful build."
+            );
+        }
+
+        if (buildRun.getVisualValidationStatus()
+                != VisualValidationStatus.PASSED) {
+            throw new DeploymentException(
+                    "Backend upload requires passed visual validation."
+            );
+        }
+
+        Path backendDirectory =
+                resolveBackendDirectory(buildRun);
+
+
+        return railwayCliDeploymentService.deployBackendAndTrack(
+                backendDirectory,
+                railwayProjectId,
+                railwayServiceId,
+                railwayEnvironmentId,
+                railwayDeploymentClient
+        );
+
+    }
+
+
+    @Transactional
+    public DeploymentResponse markBackendDeploying(
+            Long deploymentId,
+            String railwayServiceId
+    ) {
+
+        if (railwayServiceId == null
+                || railwayServiceId.isBlank()) {
+            throw new DeploymentException(
+                    "Railway service ID is required."
+            );
+        }
+
+        Deployment deployment =
+                getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendStatus()
+                == DeploymentStatus.DEPLOYING
+                || deployment.getBackendStatus()
+                == DeploymentStatus.DEPLOYED) {
+            throw new DeploymentException(
+                    "Backend deployment is already active or completed."
+            );
+        }
+
+        deployment.setBackendProvider(
+                DeploymentProvider.RAILWAY
+        );
+
+        deployment.setBackendServiceId(
+                railwayServiceId
+        );
+
+        deployment.setBackendDeploymentId(null);
+        deployment.setBackendUrl(null);
+
+        deployment.setBackendStatus(
+                DeploymentStatus.DEPLOYING
+        );
+
+        deployment.setStartedAt(
+                LocalDateTime.now()
+        );
+
+        deployment.setErrorMessage(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+    @Transactional
+    public DeploymentResponse markBackendDeployed(
+            Long deploymentId,
+            String railwayDeploymentId,
+            String backendUrl
+    ) {
+
+        if (railwayDeploymentId == null
+                || railwayDeploymentId.isBlank()) {
+            throw new DeploymentException(
+                    "Railway deployment ID is required."
+            );
+        }
+
+        Deployment deployment =
+                getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendProvider()
+                != DeploymentProvider.RAILWAY) {
+            throw new DeploymentException(
+                    "Deployment is not configured for Railway backend."
+            );
+        }
+
+        if (deployment.getBackendStatus()
+                != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Backend must be DEPLOYING before it can be DEPLOYED."
+            );
+        }
+
+        deployment.setBackendDeploymentId(
+                railwayDeploymentId
+        );
+
+        deployment.setBackendUrl(
+                backendUrl
+        );
+
+        deployment.setBackendStatus(
+                DeploymentStatus.DEPLOYED
+        );
+
+        deployment.setErrorMessage(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+    @Transactional
+    public DeploymentResponse markBackendFailed(
+            Long deploymentId,
+            String errorMessage
+    ) {
+
+        Deployment deployment =
+                getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendProvider()
+                != DeploymentProvider.RAILWAY) {
+            throw new DeploymentException(
+                    "Deployment is not configured for Railway backend."
+            );
+        }
+
+        if (deployment.getBackendStatus()
+                == DeploymentStatus.DEPLOYED) {
+            throw new DeploymentException(
+                    "Cannot mark a deployed backend as failed."
+            );
+        }
+
+        if (deployment.getBackendStatus()
+                != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Backend must be DEPLOYING before it can be FAILED."
+            );
+        }
+
+        deployment.setBackendStatus(
+                DeploymentStatus.FAILED
+        );
+
+        deployment.setErrorMessage(
+                errorMessage == null || errorMessage.isBlank()
+                        ? "Railway backend deployment failed."
+                        : errorMessage
+        );
+
+        deployment.setCompletedAt(
+                LocalDateTime.now()
+        );
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+    @Transactional
+    public DeploymentResponse recordBackendDeploymentId(
+            Long deploymentId,
+            String railwayDeploymentId
+    ) {
+        if (railwayDeploymentId == null
+                || railwayDeploymentId.isBlank()) {
+            throw new DeploymentException(
+                    "Railway deployment ID is required."
+            );
+        }
+
+        Deployment deployment = deploymentRepository
+                .findById(deploymentId)
+                .orElseThrow(() -> new DeploymentException(
+                        "Deployment not found: " + deploymentId
+                ));
+
+        if (deployment.getBackendProvider()
+                != DeploymentProvider.RAILWAY) {
+            throw new DeploymentException(
+                    "Backend provider must be RAILWAY."
+            );
+        }
+
+        if (deployment.getBackendStatus()
+                != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Backend must be DEPLOYING."
+            );
+        }
+
+        deployment.setBackendDeploymentId(railwayDeploymentId);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+
+
+
+
 
 
     @Transactional(readOnly = true)

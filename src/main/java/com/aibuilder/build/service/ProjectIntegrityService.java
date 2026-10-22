@@ -20,6 +20,64 @@ public class ProjectIntegrityService {
                             + "[\"'](\\.{1,2}/[^\"']+)[\"']"
             );
 
+
+    public ValidationResult validateFullStack(Path workspace) {
+
+        List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+
+        if (workspace == null || !Files.isDirectory(workspace)) {
+            errors.add("Full-stack workspace does not exist.");
+            return new ValidationResult(false, errors, warnings);
+        }
+
+        Path frontend = workspace.resolve("frontend");
+        Path backend = workspace.resolve("backend");
+
+        if (!Files.isDirectory(frontend)) {
+            errors.add("Missing frontend/ directory.");
+        } else {
+            ValidationResult frontendResult = validate(frontend);
+
+            for (String error : frontendResult.errors()) {
+                errors.add("frontend: " + error);
+            }
+
+            for (String warning : frontendResult.warnings()) {
+                warnings.add("frontend: " + warning);
+            }
+        }
+
+        if (!Files.isDirectory(backend)) {
+            errors.add("Missing backend/ directory.");
+        } else {
+            if (!Files.isRegularFile(backend.resolve("pom.xml"))) {
+                errors.add("Missing backend/pom.xml");
+            }
+
+            if (!Files.isDirectory(
+                    backend.resolve("src/main/java"))) {
+                errors.add("Missing backend/src/main/java/");
+            }
+
+            if (!Files.isRegularFile(
+                    backend.resolve("src/main/resources/application.yaml"))
+                    && !Files.isRegularFile(
+                    backend.resolve("src/main/resources/application.yml"))
+                    && !Files.isRegularFile(
+                    backend.resolve("src/main/resources/application.properties"))) {
+                errors.add("Missing backend application configuration.");
+            }
+        }
+
+        return new ValidationResult(
+                errors.isEmpty(),
+                errors,
+                warnings
+        );
+    }
+
+
     public ValidationResult validate(Path workspace) {
 
         List<String> errors = new ArrayList<>();

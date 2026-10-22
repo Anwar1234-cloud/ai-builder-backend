@@ -20,7 +20,9 @@ public class BuildExecutorService {
             "npm install",
             "npm test",
             "mvn test",
-            "mvn package"
+            "mvn package",
+            "mvn package -DskipTests",
+            "mvn compile"
     );
 
     public ExecutionResult execute(
@@ -98,8 +100,21 @@ public class BuildExecutorService {
 
         } catch (Exception e) {
 
+            System.err.println(
+                    "[BUILD EXECUTOR] Failed command: " + command
+            );
+
+            System.err.println(
+                    "[BUILD EXECUTOR] Workspace: " + workspace
+            );
+
+            e.printStackTrace();
+
             throw new RuntimeException(
-                    "Failed to execute build command",
+                    "Failed to execute build command: "
+                            + command
+                            + " | Cause: "
+                            + e.getMessage(),
                     e
             );
         }
@@ -110,6 +125,16 @@ public class BuildExecutorService {
             String command
     ) {
 
+        if (command.equals("mvn package -DskipTests")) {
+            return new ProcessBuilder(
+                    "cmd.exe",
+                    "/c",
+                    "mvn",
+                    "package",
+                    "-DskipTests"
+            ).directory(workspace.toFile());
+        }
+
         if (command.equals("npm run build")) {
             return new ProcessBuilder(
                     "cmd.exe",
@@ -117,9 +142,7 @@ public class BuildExecutorService {
                     "npm",
                     "run",
                     "build"
-            ).directory(
-                    workspace.toFile()
-            );
+            ).directory(workspace.toFile());
         }
 
         if (command.equals("npm install")) {
@@ -164,6 +187,15 @@ public class BuildExecutorService {
             ).directory(
                     workspace.toFile()
             );
+        }
+
+        if (command.equals("mvn compile")) {
+            return new ProcessBuilder(
+                    "cmd.exe",
+                    "/c",
+                    "mvn",
+                    "compile"
+            ).directory(workspace.toFile());
         }
 
         throw new IllegalArgumentException(

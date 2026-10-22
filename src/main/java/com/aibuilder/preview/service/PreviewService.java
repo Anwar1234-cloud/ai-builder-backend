@@ -8,6 +8,7 @@ import com.aibuilder.project.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import com.aibuilder.project.entity.ProjectType;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
@@ -70,9 +71,21 @@ public class PreviewService {
                         .toAbsolutePath()
                         .normalize();
 
-        Path distDirectory =
-                workspace.resolve("dist")
-                        .normalize();
+        Path distDirectory;
+
+        if (project.getType() == ProjectType.FULL_STACK_APP) {
+
+            distDirectory = workspace
+                    .resolve("frontend")
+                    .resolve("dist")
+                    .normalize();
+
+        } else {
+
+            distDirectory = workspace
+                    .resolve("dist")
+                    .normalize();
+        }
 
         if (!distDirectory.startsWith(workspace)) {
             throw new SecurityException(

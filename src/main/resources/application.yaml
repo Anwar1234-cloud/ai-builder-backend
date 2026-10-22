@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/ai_builder
     username: postgres
-    password:  ${DB_PASSWORD}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -48,6 +48,10 @@ spring:
         - 429
         - 503
 
+logging:
+  level:
+    org.springframework.security: TRACE
+
 server:
   port: 8080
 
@@ -59,8 +63,14 @@ app:
   preview:
     base-url: ${PREVIEW_BASE_URL:http://localhost:8080}
 
+
+
   deployment:
     vercel:
       token: ${VERCEL_TOKEN:}
       team-id: ${VERCEL_TEAM_ID:}
       api-base-url: https://api.vercel.com
+
+    railway:
+      token: ${RAILWAY_TOKEN:}
+      api-base-url: https://backboard.railway.com/graphql/v2

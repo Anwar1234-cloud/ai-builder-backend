@@ -35,4 +35,10 @@ public interface DeploymentRepository
             Long buildRunId,
             List<DeploymentStatus> statuses
     );
+
+
+    Optional<Deployment> findFirstByBuildRunIdOrderByCreatedAtDesc(
+            Long buildRunId
+    );
+
 }
