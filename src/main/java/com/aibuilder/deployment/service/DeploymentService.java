@@ -19,6 +19,7 @@ import com.aibuilder.deployment.vercel.VercelDeploymentStatus;
 import com.aibuilder.deployment.railway.RailwayCliDeploymentService;
 import com.aibuilder.deployment.railway.RailwayDeploymentClient;
 import org.springframework.transaction.annotation.Transactional;
+import com.aibuilder.project.entity.ProjectType;
 
 import java.nio.file.Path;
 import lombok.RequiredArgsConstructor;
@@ -252,6 +253,77 @@ public class DeploymentService {
         }
     }
 
+    @Transactional
+    public DeploymentResponse createPendingFullStackDeployment(
+            Long projectId
+    ) {
+
+        // 1. Validate project
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() ->
+                        new DeploymentException(
+                                "Project not found: " + projectId
+                        )
+                );
+
+        // 2. Allow only full-stack applications
+        if (project.getType() != ProjectType.FULL_STACK_APP) {
+            throw new DeploymentException(
+                    "Full-stack deployment is only supported "
+                            + "for FULL_STACK_APP projects."
+            );
+        }
+
+        // 3. Find latest deployable build
+        BuildRun buildRun = buildRunRepository
+                .findFirstByProjectIdAndStatusAndVisualValidationStatusOrderByStartedAtDesc(
+                        projectId,
+                        BuildStatus.SUCCESS,
+                        VisualValidationStatus.PASSED
+                )
+                .orElseThrow(() ->
+                        new DeploymentException(
+                                "No deployable full-stack build found. "
+                                        + "Build must succeed and pass "
+                                        + "visual validation."
+                        )
+                );
+
+        // 4. Prevent duplicate active/completed deployments
+        boolean deploymentExists = deploymentRepository
+                .existsByBuildRunIdAndStatusIn(
+                        buildRun.getId(),
+                        List.of(
+                                DeploymentStatus.PENDING,
+                                DeploymentStatus.DEPLOYING,
+                                DeploymentStatus.DEPLOYED
+                        )
+                );
+
+        if (deploymentExists) {
+            throw new DeploymentException(
+                    "Build " + buildRun.getId()
+                            + " already has an active or "
+                            + "completed deployment."
+            );
+        }
+
+        // 5. Create deployment record only
+        Deployment deployment = Deployment.builder()
+                .project(project)
+                .buildRun(buildRun)
+                .provider(DeploymentProvider.VERCEL)
+                .status(DeploymentStatus.PENDING)
+                .frontendStatus(DeploymentStatus.PENDING)
+                .backendProvider(DeploymentProvider.RAILWAY)
+                .backendStatus(DeploymentStatus.PENDING)
+                .build();
+
+        deployment = deploymentRepository.save(deployment);
+
+        return DeploymentResponse.from(deployment);
+    }
+
 
     private Path resolveBackendDirectory(BuildRun buildRun) {
 
@@ -381,6 +453,10 @@ public class DeploymentService {
                 DeploymentStatus.DEPLOYING
         );
 
+        deployment.setStatus(
+                DeploymentStatus.DEPLOYING
+        );
+
         deployment.setStartedAt(
                 LocalDateTime.now()
         );
@@ -478,6 +554,10 @@ public class DeploymentService {
                 DeploymentStatus.FAILED
         );
 
+        deployment.setStatus(
+                DeploymentStatus.FAILED
+        );
+
         deployment.setErrorMessage(
                 errorMessage == null || errorMessage.isBlank()
                         ? "Railway backend deployment failed."
@@ -487,6 +567,42 @@ public class DeploymentService {
         deployment.setCompletedAt(
                 LocalDateTime.now()
         );
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+    @Transactional
+    public DeploymentResponse markBackendProvisioningFailed(
+            Long deploymentId,
+            String errorMessage
+    ) {
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendProvider() != DeploymentProvider.RAILWAY) {
+            throw new DeploymentException(
+                    "Backend provider must be RAILWAY."
+            );
+        }
+
+        if (deployment.getBackendStatus() != DeploymentStatus.PENDING) {
+            throw new DeploymentException(
+                    "Only a PENDING backend can be marked as provisioning failed."
+            );
+        }
+
+        deployment.setBackendStatus(DeploymentStatus.FAILED);
+        deployment.setStatus(DeploymentStatus.FAILED);
+
+        deployment.setErrorMessage(
+                errorMessage == null || errorMessage.isBlank()
+                        ? "Railway backend provisioning failed."
+                        : errorMessage
+        );
+
+        deployment.setCompletedAt(LocalDateTime.now());
 
         return DeploymentResponse.from(
                 deploymentRepository.save(deployment)
@@ -527,6 +643,107 @@ public class DeploymentService {
         }
 
         deployment.setBackendDeploymentId(railwayDeploymentId);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+    @Transactional
+    public DeploymentResponse markFrontendDeploying(Long deploymentId) {
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendStatus() != DeploymentStatus.DEPLOYED) {
+            throw new DeploymentException(
+                    "Backend must be DEPLOYED before frontend deployment."
+            );
+        }
+
+        if (deployment.getBackendUrl() == null
+                || deployment.getBackendUrl().isBlank()) {
+            throw new DeploymentException(
+                    "Railway backend URL is required."
+            );
+        }
+
+        if (deployment.getFrontendStatus() != DeploymentStatus.PENDING) {
+            throw new DeploymentException(
+                    "Frontend must be PENDING before deployment."
+            );
+        }
+
+        deployment.setFrontendStatus(DeploymentStatus.DEPLOYING);
+        deployment.setStatus(DeploymentStatus.DEPLOYING);
+        deployment.setErrorMessage(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+    @Transactional
+    public DeploymentResponse markFrontendDeployed(
+            Long deploymentId,
+            String vercelDeploymentId,
+            String frontendUrl
+    ) {
+
+        if (vercelDeploymentId == null || vercelDeploymentId.isBlank()
+                || frontendUrl == null || frontendUrl.isBlank()) {
+            throw new DeploymentException(
+                    "Vercel deployment ID and frontend URL are required."
+            );
+        }
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendStatus() != DeploymentStatus.DEPLOYED
+                || deployment.getFrontendStatus() != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Backend must be DEPLOYED and frontend must be DEPLOYING."
+            );
+        }
+
+        deployment.setProviderDeploymentId(vercelDeploymentId);
+        deployment.setDeploymentUrl(frontendUrl);
+
+        deployment.setFrontendStatus(DeploymentStatus.DEPLOYED);
+        deployment.setStatus(DeploymentStatus.DEPLOYED);
+        deployment.setCompletedAt(LocalDateTime.now());
+        deployment.setErrorMessage(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+
+    @Transactional
+    public DeploymentResponse markFrontendFailed(
+            Long deploymentId,
+            String errorMessage
+    ) {
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getFrontendStatus() != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Frontend must be DEPLOYING before it can be FAILED."
+            );
+        }
+
+        deployment.setFrontendStatus(DeploymentStatus.FAILED);
+        deployment.setStatus(DeploymentStatus.FAILED);
+
+        deployment.setErrorMessage(
+                errorMessage == null || errorMessage.isBlank()
+                        ? "Frontend deployment failed."
+                        : errorMessage
+        );
+
+        deployment.setCompletedAt(LocalDateTime.now());
 
         return DeploymentResponse.from(
                 deploymentRepository.save(deployment)
@@ -684,5 +901,111 @@ public class DeploymentService {
                                         + deploymentId
                         )
                 );
+    }
+
+    @Transactional
+    public DeploymentResponse markFrontendReady(
+            Long deploymentId,
+            String vercelDeploymentId,
+            String frontendUrl
+    ) {
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getBackendStatus() != DeploymentStatus.DEPLOYED) {
+            throw new DeploymentException(
+                    "Backend must be deployed before frontend is ready."
+            );
+        }
+
+        if (deployment.getFrontendStatus() != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Frontend must be deploying before it can be ready."
+            );
+        }
+
+        if (vercelDeploymentId == null || vercelDeploymentId.isBlank()
+                || frontendUrl == null || frontendUrl.isBlank()) {
+            throw new DeploymentException(
+                    "Vercel deployment ID and frontend URL are required."
+            );
+        }
+
+        deployment.setProviderDeploymentId(vercelDeploymentId);
+        deployment.setDeploymentUrl(frontendUrl);
+
+        deployment.setFrontendStatus(DeploymentStatus.DEPLOYED);
+
+        // Railway CORS configuration is not verified yet.
+        deployment.setStatus(DeploymentStatus.DEPLOYING);
+        deployment.setCompletedAt(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+    @Transactional
+    public DeploymentResponse finalizeFullStackDeployment(
+            Long deploymentId
+    ) {
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getStatus() != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Deployment must be DEPLOYING before finalization."
+            );
+        }
+
+        if (deployment.getBackendStatus() != DeploymentStatus.DEPLOYED
+                || deployment.getFrontendStatus() != DeploymentStatus.DEPLOYED) {
+            throw new DeploymentException(
+                    "Backend and frontend must both be DEPLOYED."
+            );
+        }
+
+        if (deployment.getBackendUrl() == null
+                || deployment.getBackendUrl().isBlank()
+                || deployment.getDeploymentUrl() == null
+                || deployment.getDeploymentUrl().isBlank()) {
+            throw new DeploymentException(
+                    "Backend and frontend URLs are required."
+            );
+        }
+
+        deployment.setStatus(DeploymentStatus.DEPLOYED);
+        deployment.setCompletedAt(java.time.LocalDateTime.now());
+        deployment.setErrorMessage(null);
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
+    }
+
+    @Transactional
+    public DeploymentResponse markFullStackDeploymentFailed(
+            Long deploymentId,
+            String errorMessage
+    ) {
+
+        Deployment deployment = getDeploymentEntity(deploymentId);
+
+        if (deployment.getStatus() != DeploymentStatus.DEPLOYING) {
+            throw new DeploymentException(
+                    "Only an active deployment can be marked as failed."
+            );
+        }
+
+        String message = errorMessage == null || errorMessage.isBlank()
+                ? "Full-stack deployment finalization failed."
+                : errorMessage;
+
+        deployment.setStatus(DeploymentStatus.FAILED);
+        deployment.setErrorMessage(message);
+        deployment.setCompletedAt(LocalDateTime.now());
+
+        return DeploymentResponse.from(
+                deploymentRepository.save(deployment)
+        );
     }
 }

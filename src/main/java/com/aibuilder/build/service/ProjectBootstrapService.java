@@ -1,3 +1,4 @@
+
 package com.aibuilder.build.service;
 
 import com.aibuilder.project.entity.Project;
@@ -24,7 +25,6 @@ public class ProjectBootstrapService {
     public void bootstrapReactProject(Long projectId) {
 
         User user = getAuthenticatedUser();
-
         Project project = getOwnedProject(projectId, user);
 
         createIfMissing(
@@ -106,13 +106,12 @@ public class ProjectBootstrapService {
         );
     }
 
-
     @Transactional
     public void bootstrapFullStackProject(Long projectId) {
 
         User user = getAuthenticatedUser();
-
         Project project = getOwnedProject(projectId, user);
+
 
         createIfMissing(
                 project,
@@ -141,13 +140,14 @@ public class ProjectBootstrapService {
                 "json"
         );
 
+
         createIfMissing(
                 project,
                 "frontend/vite.config.js",
                 """
                 import { defineConfig } from 'vite';
                 import react from '@vitejs/plugin-react';
-    
+
                 export default defineConfig({
                   plugins: [react()],
                   server: {
@@ -156,6 +156,45 @@ public class ProjectBootstrapService {
                     }
                   }
                 });
+                """,
+                "javascript"
+        );
+
+        // Configurable API client for local and production
+        createIfMissing(
+                project,
+                "frontend/src/api.js",
+                """
+                const API_BASE_URL =
+                  (import.meta.env.VITE_API_BASE_URL || "")
+                    .replace(/\\/$/, "");
+
+                export async function apiRequest(path, options = {}) {
+                  const normalizedPath =
+                    path.startsWith("/") ? path : `/${path}`;
+
+                  const response = await fetch(
+                    `${API_BASE_URL}${normalizedPath}`,
+                    options
+                  );
+
+                  if (!response.ok) {
+                    throw new Error(
+                      `API request failed: ${response.status}`
+                    );
+                  }
+
+                  const contentType =
+                    response.headers.get("content-type") || "";
+
+                  if (response.status === 204) {
+                    return null;
+                  }
+
+                  return contentType.includes("application/json")
+                    ? response.json()
+                    : response.text();
+                }
                 """,
                 "javascript"
         );
@@ -188,7 +227,7 @@ public class ProjectBootstrapService {
                 import { StrictMode } from 'react';
                 import { createRoot } from 'react-dom/client';
                 import App from './App.jsx';
-    
+
                 createRoot(document.getElementById('root')).render(
                   <StrictMode>
                     <App />
@@ -214,6 +253,7 @@ public class ProjectBootstrapService {
                 "jsx"
         );
 
+        // Spring Boot backend
         createIfMissing(
                 project,
                 "backend/pom.xml",
@@ -223,53 +263,53 @@ public class ProjectBootstrapService {
                          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
                          https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    
+
                   <modelVersion>4.0.0</modelVersion>
-    
+
                   <parent>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-parent</artifactId>
                     <version>3.5.6</version>
                     <relativePath/>
                   </parent>
-    
+
                   <groupId>com.generated</groupId>
                   <artifactId>generated-app</artifactId>
                   <version>0.0.1-SNAPSHOT</version>
-    
+
                   <properties>
                     <java.version>21</java.version>
                   </properties>
-    
+
                   <dependencies>
                     <dependency>
                       <groupId>org.springframework.boot</groupId>
                       <artifactId>spring-boot-starter-web</artifactId>
                     </dependency>
-    
+
                     <dependency>
                       <groupId>org.springframework.boot</groupId>
                       <artifactId>spring-boot-starter-data-jpa</artifactId>
                     </dependency>
-    
+
                     <dependency>
                       <groupId>org.springframework.boot</groupId>
                       <artifactId>spring-boot-starter-validation</artifactId>
                     </dependency>
-    
+
                     <dependency>
                       <groupId>org.postgresql</groupId>
                       <artifactId>postgresql</artifactId>
                       <scope>runtime</scope>
                     </dependency>
-    
+
                     <dependency>
                       <groupId>org.springframework.boot</groupId>
                       <artifactId>spring-boot-starter-test</artifactId>
                       <scope>test</scope>
                     </dependency>
                   </dependencies>
-    
+
                   <build>
                     <plugins>
                       <plugin>
@@ -278,7 +318,7 @@ public class ProjectBootstrapService {
                       </plugin>
                     </plugins>
                   </build>
-    
+
                 </project>
                 """,
                 "xml"
@@ -289,18 +329,96 @@ public class ProjectBootstrapService {
                 "backend/src/main/java/com/generated/app/GeneratedApplication.java",
                 """
                 package com.generated.app;
-    
+
                 import org.springframework.boot.SpringApplication;
                 import org.springframework.boot.autoconfigure.SpringBootApplication;
-    
+
                 @SpringBootApplication
                 public class GeneratedApplication {
-    
+
                     public static void main(String[] args) {
                         SpringApplication.run(
                                 GeneratedApplication.class,
                                 args
                         );
+                    }
+                }
+                """,
+                "java"
+        );
+
+        // Generated backend health-check endpoint
+        createIfMissing(
+                project,
+                "backend/src/main/java/com/generated/app/controller/HealthController.java",
+                """
+                package com.generated.app.controller;
+        
+                import org.springframework.web.bind.annotation.GetMapping;
+                import org.springframework.web.bind.annotation.RestController;
+        
+                import java.util.Map;
+        
+                @RestController
+                public class HealthController {
+        
+                    @GetMapping("/api/health")
+                    public Map<String, String> health() {
+                        return Map.of(
+                                "status", "UP",
+                                "service", "generated-backend"
+                        );
+                    }
+                }
+                """,
+                "java"
+        );
+
+        // Generated backend CORS configuration
+        createIfMissing(
+                project,
+                "backend/src/main/java/com/generated/app/config/CorsConfig.java",
+                """
+                package com.generated.app.config;
+
+                import org.springframework.beans.factory.annotation.Value;
+                import org.springframework.context.annotation.Bean;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.web.servlet.config.annotation.CorsRegistry;
+                import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+                @Configuration
+                public class CorsConfig {
+
+                    @Value("${FRONTEND_URL:}")
+                    private String frontendUrl;
+
+                    @Bean
+                    public WebMvcConfigurer corsConfigurer() {
+                        return new WebMvcConfigurer() {
+
+                            @Override
+                            public void addCorsMappings(CorsRegistry registry) {
+
+                                if (frontendUrl == null
+                                        || frontendUrl.isBlank()) {
+                                    return;
+                                }
+
+                                registry.addMapping("/api/**")
+                                        .allowedOrigins(frontendUrl)
+                                        .allowedMethods(
+                                                "GET",
+                                                "POST",
+                                                "PUT",
+                                                "PATCH",
+                                                "DELETE",
+                                                "OPTIONS"
+                                        )
+                                        .allowedHeaders("*")
+                                        .allowCredentials(false);
+                            }
+                        };
                     }
                 }
                 """,
@@ -313,7 +431,7 @@ public class ProjectBootstrapService {
                 """
                 server:
                   port: ${PORT:8081}
-    
+
                 spring:
                   datasource:
                     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/generated_app}
@@ -327,7 +445,6 @@ public class ProjectBootstrapService {
                 "yaml"
         );
     }
-
 
     private void createIfMissing(
             Project project,

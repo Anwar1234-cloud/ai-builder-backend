@@ -4,6 +4,7 @@ package com.aibuilder.deployment.railway;
 import com.aibuilder.deployment.exception.DeploymentException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
 
 @Service
 @RequiredArgsConstructor
@@ -178,6 +179,114 @@ public class RailwayProvisioningService {
                 "SERVER_PORT",
                 "${{PORT}}"
         );
+    }
+
+    public void configureFrontendUrl(
+            String projectId,
+            String environmentId,
+            String backendServiceId,
+            String frontendUrl
+    ) {
+
+        if (projectId == null || projectId.isBlank()
+                || environmentId == null || environmentId.isBlank()
+                || backendServiceId == null || backendServiceId.isBlank()) {
+
+            throw new DeploymentException(
+                    "Railway project, environment and backend service IDs are required."
+            );
+        }
+
+        if (frontendUrl == null || frontendUrl.isBlank()) {
+            throw new DeploymentException(
+                    "Frontend URL is required for Railway CORS configuration."
+            );
+        }
+
+        java.net.URI uri;
+
+        try {
+            uri = java.net.URI.create(frontendUrl);
+        } catch (IllegalArgumentException e) {
+            throw new DeploymentException(
+                    "Invalid frontend URL.",
+                    e
+            );
+        }
+
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || uri.getHost() == null
+                || uri.getUserInfo() != null
+                || uri.getQuery() != null
+                || uri.getFragment() != null
+                || (uri.getPath() != null
+                && !uri.getPath().isEmpty()
+                && !"/".equals(uri.getPath()))) {
+
+            throw new DeploymentException(
+                    "Frontend URL must be an HTTPS origin without a path or query."
+            );
+        }
+
+        String origin = "https://" + uri.getHost();
+
+        if (uri.getPort() != -1) {
+            origin += ":" + uri.getPort();
+        }
+
+        railwayClient.upsertVariable(
+                projectId,
+                environmentId,
+                backendServiceId,
+                "FRONTEND_URL",
+                origin
+        );
+    }
+
+    public String redeployBackendAndWait(
+            String projectId,
+            String environmentId,
+            String backendServiceId
+    ) {
+
+        if (projectId == null || projectId.isBlank()
+                || environmentId == null || environmentId.isBlank()
+                || backendServiceId == null || backendServiceId.isBlank()) {
+
+            throw new DeploymentException(
+                    "Railway project, environment and service IDs are required."
+            );
+        }
+
+        String previousDeploymentId =
+                railwayClient.getLatestDeploymentId(
+                        projectId,
+                        environmentId,
+                        backendServiceId
+                );
+
+        // Railway returns the redeployment ID.
+        String redeployedId =
+                railwayClient.redeployDeployment(previousDeploymentId);
+
+        // Verify the returned deployment belongs to the expected service.
+        JsonNode deployment =
+                railwayClient.getDeploymentStatus(redeployedId);
+
+        if (!backendServiceId.equals(
+                deployment.path("serviceId").asText())
+                || !environmentId.equals(
+                deployment.path("environmentId").asText())) {
+
+            throw new DeploymentException(
+                    "Railway redeployment belongs to an unexpected service or environment."
+            );
+        }
+
+        // Wait for this exact deployment to succeed.
+        railwayClient.waitForDeploymentById(redeployedId);
+
+        return redeployedId;
     }
 
 

@@ -9,24 +9,22 @@ import java.time.LocalDateTime;
 public record DeploymentResponse(
 
         Long id,
-
         Long projectId,
-
         Long buildId,
-
         DeploymentProvider provider,
-
         DeploymentStatus status,
-
         String deploymentUrl,
-
         String errorMessage,
-
         LocalDateTime createdAt,
-
         LocalDateTime startedAt,
+        LocalDateTime completedAt,
 
-        LocalDateTime completedAt
+        DeploymentProvider backendProvider,
+        String backendServiceId,
+        String backendDeploymentId,
+        String backendUrl,
+        DeploymentStatus backendStatus,
+        DeploymentStatus frontendStatus
 
 ) {
 
@@ -35,30 +33,23 @@ public record DeploymentResponse(
     ) {
 
         return new DeploymentResponse(
-
                 deployment.getId(),
-
-                deployment
-                        .getProject()
-                        .getId(),
-
-                deployment
-                        .getBuildRun()
-                        .getId(),
-
+                deployment.getProject().getId(),
+                deployment.getBuildRun().getId(),
                 deployment.getProvider(),
-
                 deployment.getStatus(),
-
                 deployment.getDeploymentUrl(),
-
                 deployment.getErrorMessage(),
-
                 deployment.getCreatedAt(),
-
                 deployment.getStartedAt(),
+                deployment.getCompletedAt(),
 
-                deployment.getCompletedAt()
+                deployment.getBackendProvider(),
+                deployment.getBackendServiceId(),
+                deployment.getBackendDeploymentId(),
+                deployment.getBackendUrl(),
+                deployment.getBackendStatus(),
+                deployment.getFrontendStatus()
         );
     }
 }

@@ -1,12 +1,15 @@
+
 package com.aibuilder.build.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -25,9 +28,23 @@ public class BuildExecutorService {
             "mvn compile"
     );
 
+    // Existing method: keeps all current callers working
     public ExecutionResult execute(
             Path workspace,
             String command
+    ) {
+        return execute(
+                workspace,
+                command,
+                Map.of()
+        );
+    }
+
+    // New method: supports environment variables
+    public ExecutionResult execute(
+            Path workspace,
+            String command,
+            Map<String, String> environmentVariables
     ) {
 
         validateCommand(command);
@@ -39,6 +56,12 @@ public class BuildExecutorService {
                             workspace,
                             command
                     );
+
+            // Pass environment variables to the child process
+            if (environmentVariables != null) {
+                processBuilder.environment()
+                        .putAll(environmentVariables);
+            }
 
             processBuilder.redirectErrorStream(false);
 
@@ -151,9 +174,7 @@ public class BuildExecutorService {
                     "/c",
                     "npm",
                     "install"
-            ).directory(
-                    workspace.toFile()
-            );
+            ).directory(workspace.toFile());
         }
 
         if (command.equals("npm test")) {
@@ -162,9 +183,7 @@ public class BuildExecutorService {
                     "/c",
                     "npm",
                     "test"
-            ).directory(
-                    workspace.toFile()
-            );
+            ).directory(workspace.toFile());
         }
 
         if (command.equals("mvn test")) {
@@ -173,9 +192,7 @@ public class BuildExecutorService {
                     "/c",
                     "mvn",
                     "test"
-            ).directory(
-                    workspace.toFile()
-            );
+            ).directory(workspace.toFile());
         }
 
         if (command.equals("mvn package")) {
@@ -184,9 +201,7 @@ public class BuildExecutorService {
                     "/c",
                     "mvn",
                     "package"
-            ).directory(
-                    workspace.toFile()
-            );
+            ).directory(workspace.toFile());
         }
 
         if (command.equals("mvn compile")) {
@@ -219,7 +234,7 @@ public class BuildExecutorService {
     }
 
     private void readStream(
-            java.io.InputStream inputStream,
+            InputStream inputStream,
             StringBuilder output
     ) {
 
@@ -253,6 +268,7 @@ public class BuildExecutorService {
             String output,
             String errorOutput
     ) {
+
         public boolean isSuccess() {
             return exitCode == 0;
         }

@@ -1054,6 +1054,85 @@ public class AiAgentService {
                                 .content()
                 );
 
+        // Give the visual-repair agent one additional opportunity
+// when it inspected files but made no modifications.
+        if (!agentToolCallService.hasSuccessfulModification(visualFixTask.getId())
+                && agentToolCallService.hasAnySuccessfulToolCall(visualFixTask.getId())) {
+
+            System.out.println(
+                    "[VISUAL-FIX] Task " + visualFixTask.getId()
+                            + " inspected files without modifications. "
+                            + "Requesting implementation continuation."
+            );
+
+            List<Message> continuationMessages = new ArrayList<>(messages);
+
+            if (response != null && !response.isBlank()) {
+                continuationMessages.add(new AssistantMessage(response));
+            }
+
+            continuationMessages.add(
+                    new UserMessage(
+                            """
+                            Continue the visual repair task.
+        
+                            The previous execution inspected project files,
+                            but no successful file modifications were recorded.
+        
+                            Fix the visual defects identified in the original
+                            visual review.
+        
+                            Use writeFile to modify existing files or createFile
+                            when a new file is genuinely necessary.
+        
+                            Preserve existing application functionality.
+        
+                            Do not repeat unnecessary inspection.
+                            Do not claim completion without actual file changes.
+                            """
+                    )
+            );
+
+            String continuationResponse =
+                    aiGenerationRetryService.execute(
+                            "Visual fix continuation " + repairNumber,
+                            () -> chatClient
+                                    .prompt()
+                                    .system(
+                                            """
+                                            You are a visual-repair agent.
+        
+                                            The previous attempt inspected the project
+                                            without making changes.
+        
+                                            Fix the reported visual defects by
+                                            modifying the relevant project files.
+        
+                                            Preserve unrelated functionality.
+        
+                                            Do not claim success unless the project
+                                            has actually been modified.
+                                            """
+                                    )
+                                    .messages(continuationMessages)
+                                    .tools(projectTools)
+                                    .toolContext(
+                                            Map.of(
+                                                    "projectId", projectId,
+                                                    "agentRunId", agentRunId,
+                                                    "agentTaskId", visualFixTask.getId()
+                                            )
+                                    )
+                                    .call()
+                                    .content()
+                    );
+
+            if (continuationResponse != null
+                    && !continuationResponse.isBlank()) {
+                response = continuationResponse;
+            }
+        }
+
 
         boolean madeChanges =
                 agentToolCallService
@@ -1391,26 +1470,50 @@ public class AiAgentService {
                                                 Keep layouts responsive and ensure
                                                 styling is actually connected to the
                                                 application.
-                                                        When using Tailwind CSS, the complete styling
-                                                        toolchain MUST be internally consistent.
-                                                                                                        
-                                                        For Tailwind CSS v3 projects:
-                                                        - package.json must contain compatible Tailwind,
-                                                          PostCSS and Autoprefixer dependencies;
-                                                        - tailwind.config.js must contain Tailwind content,
-                                                          theme and plugin configuration;
-                                                        - postcss.config.js must configure PostCSS plugins
-                                                          such as tailwindcss and autoprefixer;
-                                                        - postcss.config.js must NEVER contain a copied
-                                                          Tailwind theme/content configuration;
-                                                        - the application's stylesheet may use the
-                                                          @tailwind base, components and utilities
-                                                          directives;
-                                                        - that stylesheet must be imported from the
-                                                          application entry/component tree.
-                                                                                                        
-                                                        Do not confuse tailwind.config.js with
-                                                        postcss.config.js.
+                                                      When using Tailwind CSS, the complete styling
+                                                              toolchain MUST be internally consistent.
+                                                              
+                                                              Determine the installed Tailwind CSS major version
+                                                              from package.json before creating or modifying
+                                                              Tailwind-related configuration files.
+                                                              
+                                                              For Tailwind CSS v4 projects using Vite:
+                                                              - package.json must include compatible versions of
+                                                                tailwindcss and @tailwindcss/vite;
+                                                              - vite.config.js or vite.config.ts MUST import
+                                                                tailwindcss from "@tailwindcss/vite" and include
+                                                                tailwindcss() in the Vite plugins array;
+                                                              - the main stylesheet MUST contain
+                                                                @import "tailwindcss";
+                                                              - the main stylesheet MUST be imported by the
+                                                                application entry point;
+                                                              - do NOT create a postcss.config.js merely for
+                                                                Tailwind CSS when using @tailwindcss/vite;
+                                                              - NEVER configure tailwindcss: {} as a PostCSS
+                                                                plugin for Tailwind CSS v4;
+                                                              - do NOT use Tailwind v3 @tailwind base,
+                                                                @tailwind components or @tailwind utilities
+                                                                directives in Tailwind CSS v4 projects.
+                                                              
+                                                              For Tailwind CSS v3 projects:
+                                                              - package.json must contain compatible Tailwind,
+                                                                PostCSS and Autoprefixer dependencies;
+                                                              - tailwind.config.js must contain Tailwind content,
+                                                                theme and plugin configuration;
+                                                              - postcss.config.js must configure PostCSS plugins
+                                                                such as tailwindcss and autoprefixer;
+                                                              - postcss.config.js must NEVER contain a copied
+                                                                Tailwind theme/content configuration;
+                                                              - the application's stylesheet may use the
+                                                                @tailwind base, components and utilities
+                                                                directives;
+                                                              - that stylesheet must be imported from the
+                                                                application entry/component tree.
+                                                              
+                                                              Never mix Tailwind CSS v3 and v4 configuration.
+                                                              
+                                                              Do not confuse tailwind.config.js with
+                                                              postcss.config.js.
                                                                                                         
                                                         When creating framework configuration files,
                                                         verify that each file contains configuration for
@@ -1440,6 +1543,84 @@ public class AiAgentService {
 
                                         .content()
                         );
+
+                if ((task.getTaskType() == AgentTaskType.IMPLEMENTATION
+                        || task.getTaskType() == AgentTaskType.BUILD_FIX
+                        || task.getTaskType() == AgentTaskType.VISUAL_FIX)
+                        && !agentToolCallService.hasSuccessfulModification(task.getId())
+                        && agentToolCallService.hasAnySuccessfulToolCall(task.getId())) {
+
+                    System.out.println(
+                            "[AGENT] Task " + task.getId()
+                                    + " completed inspection without modification. "
+                                    + "Requesting implementation continuation."
+                    );
+
+                    List<Message> continuationMessages =
+                            new ArrayList<>(messages);
+
+                    continuationMessages.add(
+                            new AssistantMessage(
+                                    taskResponse == null ? "" : taskResponse
+                            )
+                    );
+
+                    continuationMessages.add(
+                            new UserMessage(
+                                    """
+                                    Continue the IMPLEMENTATION task.
+                
+                                    Your previous execution inspected project files,
+                                    but no project modifications were recorded.
+                
+                                    Do not repeat unnecessary inspection.
+                                    Implement the requested functionality now.
+                
+                                    Use createFile for new files or writeFile for
+                                    existing files.
+                
+                                    Do not claim completion without actual changes.
+                                    """
+                            )
+                    );
+
+                    String continuationResponse =
+                            aiGenerationRetryService.execute(
+                                    "Agent implementation continuation: "
+                                            + task.getTitle(),
+                                    () -> chatClient
+                                            .prompt()
+                                            .system(
+                                                    """
+                                                    You are an AI application builder.
+                
+                                                    Complete the assigned implementation task
+                                                    using the project tools.
+                
+                                                    Do not claim success without modifying
+                                                    the project.
+                
+                                                    Inspect files only when needed.
+                                                    """
+                                            )
+                                            .messages(continuationMessages)
+                                            .tools(projectTools)
+                                            .toolContext(
+                                                    Map.of(
+                                                            "projectId", projectId,
+                                                            "agentRunId", agentRunId,
+                                                            "agentTaskId", task.getId()
+                                                    )
+                                            )
+                                            .call()
+                                            .content()
+                            );
+
+                    if (continuationResponse != null
+                            && !continuationResponse.isBlank()) {
+                        taskResponse = continuationResponse;
+                    }
+                }
 
 
                 boolean madeProjectChanges =
@@ -1542,7 +1723,11 @@ public class AiAgentService {
                 "Task failed after "
                         + MAX_TASK_EXECUTION_ATTEMPTS
                         + " execution attempts: "
-                        + task.getTitle(),
+                        + task.getTitle()
+                        + " | Last failure: "
+                        + (lastException != null
+                        ? lastException.getMessage()
+                        : "Unknown error"),
                 lastException
         );
     }

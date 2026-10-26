@@ -311,6 +311,15 @@ public class AiPlannerService {
 
             } catch (Exception e) {
 
+                System.err.println(
+                        "[GEMINI PLANNER ERROR] Attempt "
+                                + attempt
+                                + "/"
+                                + maxAttempts
+                );
+
+                e.printStackTrace(System.err);
+
                 if (attempt == maxAttempts) {
                     throw new RuntimeException(
                             "Gemini planner failed after "

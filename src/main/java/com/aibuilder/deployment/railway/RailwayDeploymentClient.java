@@ -950,4 +950,118 @@ public class RailwayDeploymentClient {
                         + deploymentId
         );
     }
+
+    public String redeployDeployment(String deploymentId) {
+
+        if (deploymentId == null || deploymentId.isBlank()) {
+            throw new DeploymentException(
+                    "Railway deployment ID is required."
+            );
+        }
+
+        String mutation = """
+            mutation RedeployDeployment($id: String!) {
+                deploymentRedeploy(id: $id) {
+                    id
+                }
+            }
+            """;
+
+        JsonNode data = execute(
+                mutation,
+                Map.of("id", deploymentId)
+        );
+
+        String redeployedId = data
+                .path("deploymentRedeploy")
+                .path("id")
+                .asText();
+
+        if (redeployedId.isBlank()) {
+            throw new DeploymentException(
+                    "Railway redeployment returned no deployment ID."
+            );
+        }
+
+        return redeployedId;
+    }
+    public String waitForNewDeployment(
+            String projectId,
+            String environmentId,
+            String serviceId,
+            String previousDeploymentId
+    ) {
+
+        long deadline = System.nanoTime()
+                + java.util.concurrent.TimeUnit.MINUTES.toNanos(5);
+
+        while (System.nanoTime() < deadline) {
+
+            JsonNode latest = getLatestDeployment(
+                    projectId,
+                    environmentId,
+                    serviceId
+            );
+
+            String newDeploymentId = latest.path("id").asText();
+
+            if (!newDeploymentId.isBlank()
+                    && !newDeploymentId.equals(previousDeploymentId)) {
+
+                JsonNode deployment = getDeploymentStatus(newDeploymentId);
+
+                if (!serviceId.equals(
+                        deployment.path("serviceId").asText())
+                        || !environmentId.equals(
+                        deployment.path("environmentId").asText())) {
+
+                    throw new DeploymentException(
+                            "New Railway deployment belongs to an unexpected service or environment."
+                    );
+                }
+
+                waitForDeploymentById(newDeploymentId);
+
+                return newDeploymentId;
+            }
+
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+
+                throw new DeploymentException(
+                        "Interrupted while waiting for a new Railway deployment.",
+                        e
+                );
+            }
+        }
+
+        throw new DeploymentException(
+                "Timed out waiting for a new Railway deployment."
+        );
+    }
+
+    public String getLatestDeploymentId(
+            String projectId,
+            String environmentId,
+            String serviceId
+    ) {
+
+        JsonNode deployment = getLatestDeployment(
+                projectId,
+                environmentId,
+                serviceId
+        );
+
+        String deploymentId = deployment.path("id").asText();
+
+        if (deploymentId.isBlank()) {
+            throw new DeploymentException(
+                    "Latest Railway deployment ID is missing."
+            );
+        }
+
+        return deploymentId;
+    }
 }

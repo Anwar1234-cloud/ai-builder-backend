@@ -60,4 +60,15 @@ public class BackendDeploymentTransactionService {
         );
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public DeploymentResponse markProvisioningFailed(
+            Long deploymentId,
+            String errorMessage
+    ) {
+        return deploymentService.markBackendProvisioningFailed(
+                deploymentId,
+                errorMessage
+        );
+    }
+
 }

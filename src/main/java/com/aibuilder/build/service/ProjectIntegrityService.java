@@ -503,6 +503,90 @@ public class ProjectIntegrityService {
                             )
                             .toList();
         }
+        // Tailwind CSS v4 with the official Vite plugin
+        boolean usesTailwindV4 = packageContent.matches(
+                "(?s).*\"tailwindcss\"\\s*:\\s*\"[~^]?4(?:\\.|\"|$).*"
+        );
+
+        if (usesTailwindV4) {
+
+            boolean hasTailwindImport = false;
+
+            for (Path cssFile : cssFiles) {
+                String css = Files.readString(
+                        cssFile,
+                        StandardCharsets.UTF_8
+                );
+
+                if (css.contains("@import \"tailwindcss\"")
+                        || css.contains("@import 'tailwindcss'")) {
+                    hasTailwindImport = true;
+                    break;
+                }
+            }
+
+            if (!hasTailwindImport) {
+                errors.add(
+                        "TAILWIND_V4_CONFIGURATION_ERROR: "
+                                + "Tailwind CSS v4 requires "
+                                + "@import \"tailwindcss\" in the main stylesheet."
+                );
+            }
+
+            Path viteConfig = findFirstExisting(
+                    workspace,
+                    "vite.config.js",
+                    "vite.config.ts",
+                    "vite.config.mjs",
+                    "vite.config.mts"
+            );
+
+            if (viteConfig != null) {
+
+                String viteContent = Files.readString(
+                        viteConfig,
+                        StandardCharsets.UTF_8
+                );
+
+                if (!packageContent.contains("\"@tailwindcss/vite\"")
+                        || !viteContent.contains("@tailwindcss/vite")
+                        || !viteContent.contains("tailwindcss()")) {
+
+                    errors.add(
+                            "TAILWIND_V4_CONFIGURATION_ERROR: "
+                                    + "Tailwind CSS v4 with Vite requires "
+                                    + "@tailwindcss/vite in package.json "
+                                    + "and tailwindcss() in vite.config."
+                    );
+                }
+            }
+
+            Path postcssConfig = findFirstExisting(
+                    workspace,
+                    "postcss.config.js",
+                    "postcss.config.cjs",
+                    "postcss.config.mjs"
+            );
+
+            if (postcssConfig != null) {
+
+                String postcssContent = Files.readString(
+                        postcssConfig,
+                        StandardCharsets.UTF_8
+                );
+
+                if (containsPostCssPlugin(postcssContent, "tailwindcss")) {
+                    errors.add(
+                            "TAILWIND_V4_CONFIGURATION_ERROR: "
+                                    + "Tailwind CSS v4 must not use the old "
+                                    + "tailwindcss PostCSS plugin. "
+                                    + "Use @tailwindcss/vite for Vite projects."
+                    );
+                }
+            }
+
+            return;
+        }
 
         boolean usesTailwindV3Directives = false;
 

@@ -16,6 +16,8 @@ public class RailwayBackendOrchestrationService {
 
     private final RailwayBackendUrlService backendUrlService;
 
+    private final RailwayBackendHealthService backendHealthService;
+
     public DeploymentResponse deployBackend(
             Long deploymentId,
             Long buildRunId,
@@ -75,37 +77,59 @@ public class RailwayBackendOrchestrationService {
             );
         }
 
-        // Persist deployment ID before resolving the URL.
-        transactionService.recordDeploymentId(
-                deploymentId,
-                railwayDeploymentId
-        );
-
-        String resolvedBackendUrl;
-
         try {
-            resolvedBackendUrl =
+
+            // STEP 1: Persist Railway deployment ID
+            transactionService.recordDeploymentId(
+                    deploymentId,
+                    railwayDeploymentId
+            );
+
+            // STEP 2: Resolve public backend URL
+            String resolvedBackendUrl =
                     backendUrlService.resolveBackendUrl(
                             railwayProjectId,
                             railwayEnvironmentId,
                             railwayServiceId
                     );
 
+            if (resolvedBackendUrl == null
+                    || resolvedBackendUrl.isBlank()) {
+
+                throw new DeploymentException(
+                        "Railway backend URL is missing."
+                );
+            }
+
+// STEP 3: Verify actual backend HTTP health
+            backendHealthService.verifyHealth(resolvedBackendUrl);
+
+// STEP 4: Mark backend deployed only after health verification
+            return transactionService.markDeployed(
+                    deploymentId,
+                    railwayDeploymentId,
+                    resolvedBackendUrl
+            );
+
         } catch (Exception e) {
-            // Railway deployment may already be successful.
-            // Keep DEPLOYING state for recovery.
+
+            try {
+
+                transactionService.markFailed(
+                        deploymentId,
+                        e.getMessage()
+                );
+
+            } catch (Exception statusException) {
+
+                e.addSuppressed(statusException);
+            }
+
             throw new DeploymentException(
-                    "Railway deployment succeeded, but backend URL "
-                            + "resolution failed. Deployment ID: "
-                            + railwayDeploymentId,
+                    "Railway backend deployment finalization failed: "
+                            + e.getMessage(),
                     e
             );
         }
-
-        return transactionService.markDeployed(
-                deploymentId,
-                railwayDeploymentId,
-                resolvedBackendUrl
-        );
     }
 }

@@ -22,7 +22,7 @@ spring:
       genai:
         api-key: ${GEMINI_API_KEY}
         chat:
-          model:  gemini-3.5-flash-lite
+          model: gemini-3.1-flash-lite
           temperature: 0.2
           max-output-tokens: 8192
 
@@ -73,4 +73,5 @@ app:
 
     railway:
       token: ${RAILWAY_TOKEN:}
+      workspace-id: ${RAILWAY_WORKSPACE_ID:}
       api-base-url: https://backboard.railway.com/graphql/v2

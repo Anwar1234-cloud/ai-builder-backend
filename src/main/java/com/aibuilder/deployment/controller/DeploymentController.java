@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.aibuilder.deployment.service.FullStackDeploymentService;
 
 import java.util.List;
 
@@ -20,6 +21,7 @@ public class DeploymentController {
     private final DeploymentService deploymentService;
     private final DeploymentAccessService accessService;
     private final RailwayAutomaticDeploymentService railwayAutomaticDeploymentService;
+    private final FullStackDeploymentService fullStackDeploymentService;
 
     @PostMapping
     public ResponseEntity<DeploymentResponse> createDeployment(
@@ -33,6 +35,18 @@ public class DeploymentController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(response);
+    }
+
+    @PostMapping("/fullstack")
+    public ResponseEntity<DeploymentResponse> deployFullStack(
+            @PathVariable Long projectId
+    ) {
+        accessService.requireProjectOwner(projectId);
+
+        DeploymentResponse response =
+                fullStackDeploymentService.deploy(projectId);
+
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/{deploymentId}/backend")
